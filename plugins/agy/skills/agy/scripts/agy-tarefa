@@ -7,31 +7,44 @@
 #              [--papel codigo|revisao|imagem|rapido|pesquisa] [--modelo ID] \
 #              [--modo accept-edits|plan] [--esforco low|medium|high|xhigh|max] \
 #              [--timeout SEGUNDOS] [--schema schema.json] [--nome rotulo] \
-#              [--continuar ID_DA_CONVERSA] [--sem-regras]
+#              [--continuar ID_DA_CONVERSA] [--max-linhas N] [--sem-regras] \
+#              [--manter-donos]
 #
 # Cada execução vira uma pasta em ~/.cache/agy-skill/execucoes/ com:
 #   prompt.md       o prompt exato enviado
 #   resultado.json  a saída JSON do agy (status, resposta, tokens, conversa)
 #   resposta.md     só a resposta em texto
 #   alteracoes.txt  arquivos que mudaram de verdade em cada --dir (via git)
+#   meta.json       modelo, papel, status, duração, tokens, id da conversa
 #   stderr.log      erros do agy
 # A última linha impressa é "PASTA=<caminho>", para quem chamou achar tudo.
 #
-# Códigos de saída: 0 ok, 1 erro do agy, 2 uso errado, 124 tempo esgotado,
-#                   3 ok mas o agy fez commit (não deveria).
+# Códigos de saída: 0 ok, 1 erro do agy ou resposta vazia, 2 uso errado,
+#                   3 ok mas o agy fez commit (não deveria), 124 tempo esgotado.
+#
+# Compatível com bash 3.2 (macOS), Linux e WSL. Requer git e python3.
 set -uo pipefail
+# Nenhum comando git destes scripts grava no repositório. Sem isso, um simples "git status"
+# rodado como root regrava o .git/index com dono root e o git do usuário quebra depois.
+export GIT_OPTIONAL_LOCKS=0
 
-AQUI="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
-dirs=(); prompt=""; prompt_arquivo=""; papel="codigo"; modelo=""; modo="accept-edits"
-esforco=""; tempo=2400; schema=""; nome="tarefa"; continuar=""; regras=1
+real() { python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"; }
+AQUI="$(dirname "$(real "${BASH_SOURCE[0]}")")"
+
+dirs=(); ndirs=0; prompt=""; prompt_arquivo=""; papel="codigo"; modelo=""
+modo="accept-edits"; esforco=""; tempo=2400; schema=""; nome="tarefa"; continuar=""
+regras=1; corrigir_donos=1; max_linhas="${AGY_MAX_LINHAS:-150}"
+LIMITE_ARGUMENTO=100000   # o Linux recusa um argumento único acima de 128 KiB
 
 erro_uso() { echo "agy-tarefa: $*" >&2; exit 2; }
-uso() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
-valor() { [ $# -ge 2 ] && [ -n "$2" ] || erro_uso "falta o valor de $1"; }
+uso() { sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+valor() { if [ $# -lt 2 ] || [ -z "$2" ]; then erro_uso "falta o valor de $1"; fi; }
+inteiro() { [[ "$1" =~ ^[1-9][0-9]*$ ]]; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --dir) valor "$@"; d="$(readlink -f -- "$2")" || erro_uso "caminho inválido: $2"; dirs+=("$d"); shift 2 ;;
+        --dir) valor "$@"; [ -e "$2" ] || erro_uso "pasta não existe: $2"
+               dirs[ndirs]="$(real "$2")"; ndirs=$((ndirs + 1)); shift 2 ;;
         --prompt) valor "$@"; prompt="$2"; shift 2 ;;
         --prompt-arquivo) valor "$@"; prompt_arquivo="$2"; shift 2 ;;
         --papel) valor "$@"; papel="$2"; shift 2 ;;
@@ -39,35 +52,42 @@ while [ $# -gt 0 ]; do
         --modo) valor "$@"; modo="$2"; shift 2 ;;
         --esforco) valor "$@"; esforco="$2"; shift 2 ;;
         --timeout) valor "$@"; tempo="$2"; shift 2 ;;
-        --schema) valor "$@"; schema="$(readlink -f -- "$2")" || erro_uso "caminho inválido: $2"; shift 2 ;;
+        --schema) valor "$@"; [ -f "$2" ] || erro_uso "não achei o schema $2"; schema="$(real "$2")"; shift 2 ;;
         --nome) valor "$@"; nome="$2"; shift 2 ;;
         --continuar) valor "$@"; continuar="$2"; shift 2 ;;
+        --max-linhas) valor "$@"; max_linhas="$2"; shift 2 ;;
         --sem-regras) regras=0; shift ;;
+        --manter-donos) corrigir_donos=0; shift ;;
         -h|--help) uso ;;
         *) echo "agy-tarefa: opção desconhecida: $1" >&2; uso ;;
     esac
 done
 
-command -v agy >/dev/null || erro_uso "o agy não está instalado ou não está no PATH"
+command -v agy >/dev/null 2>&1 || erro_uso "o agy não está instalado ou não está no PATH"
+command -v git >/dev/null 2>&1 || erro_uso "o git não está instalado"
 if [ -n "$prompt_arquivo" ]; then
     [ -f "$prompt_arquivo" ] || erro_uso "não achei $prompt_arquivo"
     prompt="$(cat -- "$prompt_arquivo")"
 fi
 [ -n "$prompt" ] || erro_uso "falta --prompt ou --prompt-arquivo"
 case "$modo" in accept-edits|plan) ;; *) erro_uso "--modo deve ser accept-edits ou plan" ;; esac
-[[ "$tempo" =~ ^[1-9][0-9]*$ ]] || erro_uso "--timeout deve ser um número inteiro de segundos (ex.: 2400)"
-[ -z "$schema" ] || [ -f "$schema" ] || erro_uso "não achei o schema $schema"
+inteiro "$tempo" || erro_uso "--timeout deve ser um número inteiro de segundos (ex.: 2400)"
+inteiro "$max_linhas" || erro_uso "--max-linhas deve ser um número inteiro"
 # Sem --add-dir o agy grava no rascunho dele e diz "feito" sem ter feito nada.
-[ "${#dirs[@]}" -gt 0 ] || erro_uso "passe ao menos um --dir (o agy só enxerga/edita as pastas adicionadas)"
-for d in "${dirs[@]}"; do [ -d "$d" ] || erro_uso "pasta não existe: $d"; done
+[ "$ndirs" -gt 0 ] || erro_uso "passe ao menos um --dir (o agy só enxerga/edita as pastas adicionadas)"
+for d in "${dirs[@]}"; do [ -d "$d" ] || erro_uso "não é uma pasta: $d"; done
 if [ -z "$modelo" ]; then modelo="$("$AQUI/agy-modelo" "$papel")" || exit 2; fi
 
-slug="$(printf '%s' "$nome" | tr -cs 'A-Za-z0-9' '-' | tr 'A-Z' 'a-z' | cut -c1-40)"
-slug="${slug%-}"; slug="${slug#-}"; [ -n "$slug" ] || slug="tarefa"
+# Pasta de registro única (várias tarefas podem começar no mesmo segundo)
 base="${XDG_CACHE_HOME:-$HOME/.cache}/agy-skill/execucoes"
-mkdir -p "$base"
-# mktemp garante pasta única mesmo com várias tarefas no mesmo segundo
-pasta="$(mktemp -d "$base/$(date +%Y%m%d-%H%M%S)-$slug-XXXX")" || erro_uso "não consegui criar a pasta de registro em $base"
+mkdir -p "$base" || erro_uso "não consegui criar $base"
+retencao="${AGY_SKILL_RETENCAO_DIAS:-30}"
+if inteiro "$retencao"; then
+    find "$base" -mindepth 1 -maxdepth 1 -type d -mtime +"$retencao" -exec rm -rf {} + 2>/dev/null
+fi
+slug="$(printf '%s' "$nome" | tr '[:upper:]' '[:lower:]' | tr -cs '[:alnum:]' '-' | cut -c1-40)"
+slug="${slug%-}"; slug="${slug#-}"; [ -n "$slug" ] || slug="tarefa"
+pasta="$(mktemp -d "$base/$(date +%Y%m%d-%H%M%S)-$slug-XXXX")" || erro_uso "não consegui criar a pasta de registro"
 
 if [ "$regras" -eq 1 ]; then
     lista_dirs="$(printf -- '  - %s\n' "${dirs[@]}")"
@@ -84,22 +104,29 @@ $lista_dirs
 fi
 printf '%s\n' "$prompt" > "$pasta/prompt.md"
 
+# Prompt grande demais para a linha de comando: o agy lê o pedido de um arquivo.
+pedido_em_arquivo=0
+if [ "$(wc -c < "$pasta/prompt.md" | tr -d ' ')" -gt "$LIMITE_ARGUMENTO" ]; then
+    pedido_em_arquivo=1
+    prompt="As instruções completas desta tarefa estão no arquivo $pasta/prompt.md (são longas demais para a linha de comando). Leia o arquivo inteiro antes de começar e siga exatamente o que ele pede. Esse arquivo é só para leitura: não o altere."
+fi
+
 # "Foto" de uma pasta: HEAD + cada arquivo sujo/novo com o hash do conteúdo.
 # Com o hash, uma nova edição num arquivo que já estava modificado também aparece.
 foto() {
     python3 -I - "$1" <<'PYEOF'
 import os, subprocess, sys
 d = sys.argv[1]
-def git(*a):
-    return subprocess.run(["git", "-C", d, *a], capture_output=True)
-if git("rev-parse", "--is-inside-work-tree").returncode != 0:
-    print("NAO-GIT"); sys.exit()
+def git(*a, **kw):
+    return subprocess.run(["git", "-C", d, *a], capture_output=True, **kw)
+r = git("rev-parse", "--is-inside-work-tree")
+if r.returncode != 0:
+    print("NAO-CONFIAVEL" if b"dubious ownership" in r.stderr else "NAO-GIT"); sys.exit()
 head = git("rev-parse", "HEAD")
 print(head.stdout.decode().strip() if head.returncode == 0 else "sem-commits")
 raiz = git("rev-parse", "--show-toplevel").stdout.decode().strip()
-saida = git("status", "--porcelain=v1", "-uall", "-z").stdout.decode("utf-8", "replace")
-itens = saida.split("\0")
-i = 0
+itens = git("status", "--porcelain=v1", "-uall", "-z").stdout.decode("utf-8", "replace").split("\0")
+linhas, i = [], 0
 while i < len(itens):
     item = itens[i]; i += 1
     if len(item) < 4:
@@ -107,42 +134,65 @@ while i < len(itens):
     xy, caminho = item[:2], item[3:]
     if xy[0] in "RC":          # renomeado/copiado: o próximo item é o nome antigo
         i += 1
-    alvo = os.path.join(raiz, caminho)
-    if os.path.isfile(alvo):
-        h = subprocess.run(["git", "hash-object", "--", alvo], capture_output=True).stdout.decode().strip()
-    else:
-        h = "-"
-    print(f"{xy}\t{h}\t{caminho}")
+    linhas.append((xy, caminho))
+# Um único "git hash-object" para todos os arquivos (rápido mesmo com muitos arquivos)
+existentes = [c for _, c in linhas if "\n" not in c and os.path.isfile(os.path.join(raiz, c))]
+hashes = {}
+if existentes:
+    r = subprocess.run(["git", "hash-object", "--stdin-paths"], cwd=raiz, capture_output=True,
+                       input="\n".join(existentes).encode())
+    hashes = dict(zip(existentes, r.stdout.decode().split()))
+for xy, caminho in linhas:
+    print(f"{xy}\t{hashes.get(caminho, '-')}\t{caminho}")
 PYEOF
 }
-declare -A antes
-for d in "${dirs[@]}"; do antes["$d"]="$(foto "$d")"; done
+i=0; for d in "${dirs[@]}"; do foto "$d" > "$pasta/.foto-antes-$i"; i=$((i + 1)); done
 
 cmd=(agy -p "$prompt" --mode "$modo" --model "$modelo" --output-format json --print-timeout "${tempo}s")
 for d in "${dirs[@]}"; do cmd+=(--add-dir "$d"); done
+[ "$pedido_em_arquivo" -eq 1 ] && cmd+=(--add-dir "$pasta")
 [ -n "$esforco" ] && cmd+=(--effort "$esforco")
 [ -n "$schema" ] && cmd+=(--json-schema "$schema")
 [ -n "$continuar" ] && cmd+=(--conversation "$continuar")
 
+# O próprio agy encerra no --print-timeout; o timeout externo é só a rede de segurança.
+# AGY_SKILL_SEM_TIMEOUT=1 dispensa a rede de segurança (usado nos testes).
+guarda=""
+if [ "${AGY_SKILL_SEM_TIMEOUT:-0}" != "1" ]; then
+    if command -v timeout >/dev/null 2>&1; then guarda="timeout"
+    elif command -v gtimeout >/dev/null 2>&1; then guarda="gtimeout"; fi
+fi
+
 inicio=$(date +%s)
-# O timeout do próprio agy (--print-timeout) responde com JSON; o externo é a rede de segurança.
-timeout --kill-after=30 "$((tempo + 60))" "${cmd[@]}" > "$pasta/resultado.json" 2> "$pasta/stderr.log"
+if [ -n "$guarda" ]; then
+    "$guarda" --kill-after=30 "$((tempo + 60))" "${cmd[@]}" > "$pasta/resultado.json" 2> "$pasta/stderr.log"
+else
+    "${cmd[@]}" > "$pasta/resultado.json" 2> "$pasta/stderr.log"
+fi
 codigo=$?
 duracao=$(( $(date +%s) - inicio ))
 
 # O que mudou em cada pasta
 commit_feito=0
+i=0
 {
     for d in "${dirs[@]}"; do
-        depois="$(foto "$d")"
+        antes="$pasta/.foto-antes-$i"; depois="$pasta/.foto-depois-$i"
+        foto "$d" > "$depois"
+        i=$((i + 1))
         echo "## $d"
-        if [ "${antes[$d]}" = "NAO-GIT" ]; then
+        if [ "$(head -1 "$antes")" = "NAO-GIT" ]; then
             echo "(não é repositório git: confira os arquivos à mão)"
             echo
             continue
         fi
-        head_antes="$(printf '%s\n' "${antes[$d]}" | head -1)"
-        head_depois="$(printf '%s\n' "$depois" | head -1)"
+        if [ "$(head -1 "$antes")" = "NAO-CONFIAVEL" ]; then
+            echo "(o git recusou este repositório porque o dono é outro usuário. Rode com sudo, que o git"
+            echo " aceita pelo SUDO_UID, ou confira os arquivos à mão. Não desligue o safe.directory como root.)"
+            echo
+            continue
+        fi
+        head_antes="$(head -1 "$antes")"; head_depois="$(head -1 "$depois")"
         if [ "$head_antes" != "$head_depois" ]; then
             echo "ALERTA: o HEAD mudou ($head_antes -> $head_depois): o agy fez commit ou trocou de branch"
             commit_feito=1
@@ -153,12 +203,12 @@ commit_feito=0
                 git -C "$d" diff --name-status "$head_antes" "$head_depois" | sed 's/^/  /'
             fi
         fi
-        # Compara arquivo a arquivo (estado + hash). Lista o que surgiu, mudou ou voltou ao normal.
-        python3 -I - <(printf '%s\n' "${antes[$d]}" | tail -n +2) <(printf '%s\n' "$depois" | tail -n +2) <<'PYEOF'
+        # Compara arquivo a arquivo (estado + hash): o que surgiu, mudou ou voltou ao normal.
+        python3 -I - "$antes" "$depois" <<'PYEOF'
 import sys
 def ler(p):
     r = {}
-    for linha in open(p, encoding="utf-8", errors="replace"):
+    for linha in list(open(p, encoding="utf-8", errors="replace"))[1:]:
         partes = linha.rstrip("\n").split("\t", 2)
         if len(partes) == 3:
             r[partes[2]] = (partes[0], partes[1])
@@ -182,10 +232,47 @@ PYEOF
     done
 } > "$pasta/alteracoes.txt"
 
-# Resumo, resposta e metadados
-status="$(python3 -I - "$pasta" "$modelo" "$papel" "$modo" "$duracao" "$codigo" "$tempo" <<'PYEOF'
+# Rodando como root numa pasta de outro usuário (ex.: "sudo claude"), devolve ao dono da pasta
+# o que o agy criou durante a tarefa (comandos de terminal do agy criam arquivos como root).
+# Roda por último, depois de todo git. Só mexe em arquivo com um único link e no mesmo disco:
+# um hardlink para um arquivo do root não pode servir para entregar esse arquivo ao usuário.
+if [ "$corrigir_donos" -eq 1 ] && [ "$(id -u)" -eq 0 ]; then
+    donos_corrigidos=0
+    for d in "${dirs[@]}"; do
+        n="$(python3 -I - "$d" "$((inicio - 1))" <<'PYEOF'
+import os, stat, sys
+raiz, inicio = sys.argv[1], float(sys.argv[2])
+st = os.stat(raiz)
+if st.st_uid == 0:
+    print(0); sys.exit()
+n = 0
+for base, pastas, arquivos in os.walk(raiz):
+    pastas[:] = [p for p in pastas if os.lstat(os.path.join(base, p)).st_dev == st.st_dev]
+    for nome in pastas + arquivos:
+        p = os.path.join(base, nome)
+        try:
+            s = os.lstat(p)
+            if (s.st_uid == 0 and s.st_dev == st.st_dev
+                    and (stat.S_ISDIR(s.st_mode) or s.st_nlink == 1)
+                    and max(s.st_mtime, s.st_ctime) >= inicio):
+                os.chown(p, st.st_uid, st.st_gid, follow_symlinks=False)
+                n += 1
+        except OSError:
+            pass
+print(n)
+PYEOF
+)"
+        donos_corrigidos=$((donos_corrigidos + ${n:-0}))
+    done
+    if [ "$donos_corrigidos" -gt 0 ]; then
+        echo "(donos corrigidos: $donos_corrigidos arquivo(s) criados como root voltaram para o dono da pasta)" >> "$pasta/alteracoes.txt"
+    fi
+fi
+
+# Resposta, metadados e status final
+status="$(python3 -I - "$pasta" "$modelo" "$papel" "$modo" "$duracao" "$codigo" "$pedido_em_arquivo" "$nome" "$guarda" <<'PYEOF'
 import json, os, sys
-pasta, modelo, papel, modo, duracao, codigo, tempo = sys.argv[1:]
+pasta, modelo, papel, modo, duracao, codigo, pedido_em_arquivo, nome, guarda = sys.argv[1:]
 try:
     d = json.load(open(os.path.join(pasta, "resultado.json")))
 except Exception:
@@ -205,21 +292,40 @@ if (int(codigo) in (124, 137) or d.get("finished_reason") == "print_timeout"
 elif status == "SUCCESS" and not resposta.strip() and d.get("structured_output") is None:
     status = "RESPOSTA-VAZIA"   # "sucesso" sem nada escrito não serve como prova de nada
 u = d.get("usage") or {}
-json.dump({"modelo": modelo, "papel": papel, "modo": modo, "duracao_s": int(duracao),
+json.dump({"nome": nome, "modelo": modelo, "papel": papel, "modo": modo, "duracao_s": int(duracao),
            "codigo_saida_agy": int(codigo), "status": status, "conversa": d.get("conversation_id"),
-           "tokens": u.get("total_tokens")},
+           "tokens": u.get("total_tokens"), "pedido_em_arquivo": pedido_em_arquivo == "1",
+           "limite_externo": guarda or None},
           open(os.path.join(pasta, "meta.json"), "w"), ensure_ascii=False, indent=2)
 print(status)
 PYEOF
 )"
 
+# Por último (depois de gravar meta.json e resposta.md): se o cache fica na casa de outro
+# usuário (sudo mantendo o HOME), a pasta do cache volta inteira para esse usuário.
+if [ "$corrigir_donos" -eq 1 ] && [ "$(id -u)" -eq 0 ]; then
+    cache_raiz="$(dirname "$(dirname "$base")")"
+    dono_cache="$(python3 -I -c 'import os, sys; s = os.stat(sys.argv[1]); print("%d:%d" % (s.st_uid, s.st_gid))' "$cache_raiz")"
+    case "$dono_cache" in 0:*) ;; *) chown -R "$dono_cache" "$cache_raiz/agy-skill" 2>/dev/null ;; esac
+fi
+
+# Mostra o essencial; o completo fica nos arquivos (economiza o contexto de quem chamou).
+mostra() {  # arquivo, limite
+    local total
+    total=$(wc -l < "$1" | tr -d ' ')
+    head -n "$2" "$1"
+    if [ "$total" -gt "$2" ]; then
+        echo "... (+$((total - $2)) linhas; completo em $1)"
+    fi
+}
 echo "=== agy-tarefa: $status | modelo $modelo | modo $modo | ${duracao}s ==="
-cat "$pasta/resposta.md"; echo
-echo "--- arquivos alterados (git) ---"; cat "$pasta/alteracoes.txt"
+mostra "$pasta/resposta.md" "$max_linhas"; echo
+echo "--- arquivos alterados (git) ---"
+mostra "$pasta/alteracoes.txt" 80
 echo "PASTA=$pasta"
 
 case "$status" in
     TEMPO-ESGOTADO) exit 124 ;;
-    SUCCESS) [ "$commit_feito" -eq 1 ] && exit 3; exit 0 ;;
+    SUCCESS) if [ "$commit_feito" -eq 1 ]; then exit 3; fi; exit 0 ;;
     *) exit 1 ;;
 esac

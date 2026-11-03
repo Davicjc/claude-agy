@@ -38,6 +38,23 @@ PAPEIS = {
 ESFORCOS = ("xhigh", "max", "high", "medium", "low")
 
 
+def devolver_cache_ao_dono():
+    """Rodando como root com o cache na casa de outro usuário (sudo mantendo o HOME),
+    devolve a pasta do cache a esse usuário, senão ele não consegue usar depois."""
+    if not hasattr(os, "geteuid") or os.geteuid() != 0:
+        return
+    pasta = os.path.dirname(CACHE)                  # .../agy-skill
+    raiz = os.path.dirname(pasta)                   # .../.cache
+    dono = os.stat(raiz)
+    if dono.st_uid == 0:
+        return
+    for p in (pasta, CACHE):
+        try:
+            os.chown(p, dono.st_uid, dono.st_gid, follow_symlinks=False)
+        except OSError:
+            pass
+
+
 def ler_modelos(atualizar=False):
     if not atualizar and os.path.exists(CACHE) and time.time() - os.path.getmtime(CACHE) < CACHE_SEGUNDOS:
         with open(CACHE, encoding="utf-8") as f:
@@ -60,6 +77,7 @@ def ler_modelos(atualizar=False):
             os.makedirs(os.path.dirname(CACHE), exist_ok=True)
             with open(CACHE, "w", encoding="utf-8") as f:
                 f.write("\n".join(linhas) + "\n")
+            devolver_cache_ao_dono()
     modelos = []
     for linha in linhas:
         ident, _, nome = linha.partition("\t")
