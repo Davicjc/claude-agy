@@ -1,5 +1,9 @@
 # Histórico de versões
 
+## 1.1.1 — 03/11/2026
+
+- `agy-historico`: concordância ("1 execução" em vez de "1 execuções").
+
 ## 1.1.0 — 03/11/2026
 
 **Correções**

@@ -245,6 +245,7 @@ if [ "$(meta "$P" pedido_em_arquivo)" = "True" ]; then passa "diff médio vai po
 echo "== agy-historico"
 espera 0 "lista as execuções" "$S/agy-historico" 5
 contem "mostra o total" "execuções"
+nao_contem "concordância no singular" " 1 execuções"
 espera 0 "--json" "$S/agy-historico" --json
 if printf '%s' "$ULTIMA" | python3 -I -c 'import json, sys; assert len(json.load(sys.stdin)) > 5'; then passa "--json é válido"; else falha "--json é válido"; fi
 

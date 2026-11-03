@@ -61,9 +61,11 @@ def main():
     for m in execucoes:
         por_modelo[m.get("modelo")][0] += 1
         por_modelo[m.get("modelo")][1] += m.get("tokens") or 0
-    print(f"\nTotal guardado: {len(execucoes)} execuções")
+    def plural(n):
+        return "execução" if n == 1 else "execuções"
+    print(f"\nTotal guardado: {len(execucoes)} {plural(len(execucoes))}")
     for modelo, (qtd, tok) in sorted(por_modelo.items(), key=lambda x: -x[1][1]):
-        print(f"  {str(modelo):<26} {qtd:>4} execuções  {tok:>10} tokens")
+        print(f"  {str(modelo):<26} {qtd:>4} {plural(qtd):<10} {tok:>10} tokens")
 
 
 if __name__ == "__main__":
