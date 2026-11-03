@@ -1,14 +1,38 @@
+<p align="center">
+  <img src=".github/readme/banner.png" alt="claude-agy banner" width="100%">
+</p>
+
 # claude-agy
 
-**Português** | **[Read in English](README.en.md)**
+<p align="center">
+  <b>Português</b> · <a href="README.en.md">Read in English</a>
+</p>
 
-[![testes](https://github.com/Davicjc/claude-agy/actions/workflows/testes.yml/badge.svg)](https://github.com/Davicjc/claude-agy/actions/workflows/testes.yml)
+<p align="center">
+  <a href="https://github.com/Davicjc/claude-agy/actions/workflows/testes.yml"><img src="https://github.com/Davicjc/claude-agy/actions/workflows/testes.yml/badge.svg" alt="testes"></a>
+</p>
 
-Plugin do **Claude Code** que faz o Claude e o **agy** (Antigravity CLI, com modelos Gemini) trabalharem juntos.
-O Claude especifica, delega, confere e decide. O agy executa onde é mais forte (imagem, áudio, vídeo e
-trabalho em volume) e serve de **revisor independente** do código.
+Plugin do **Claude Code** que faz o Claude e o **agy** (Antigravity CLI, com modelos Gemini) trabalharem juntos como uma equipe de engenharia:
+o Claude assume o papel de **Tech Lead e Arquiteto** (cuida da "barra pesada", raciocínio estratégico, regras de negócio e validação rigorosa), enquanto o agy atua como o **Braço Executor de Alto Volume** (trabalho braçal repetitivo, multimídia e revisão independente) — **economizando tokens preciosos e mantendo o contexto do Claude sempre limpo**.
 
-<img src="plugins/agy/.claude-plugin/icon.png" width="96" alt="ícone do plugin">
+---
+
+## Por que essa dupla? (Divisão de papéis)
+
+Em projetos reais, queimar a janela de contexto e a cota do Claude com tarefas mecânicas ou arquivos gigantescos é caro e ineficiente. O plugin une o melhor de dois mundos:
+
+| Papel | Quem faz | O que assume |
+|---|---|---|
+| **A "Barra Pesada"**<br>*(Tech Lead & Arquiteto)* | **Claude Code** | • Planeja a arquitetura e divide problemas complexos em partes isoladas<br>• Define limites de segurança estritos e contratos claros de execução<br>• **Não acredita no "feito"**: audita diffs reais no git, roda testes, confere telas<br>• Toma as decisões difíceis de arquitetura e aprovação final |
+| **O Braço Executor**<br>*(Volume & Multimodal)* | **agy (Gemini)** | • Trabalho braçal: refatorações repetitivas em dezenas de arquivos, boilerplate e migrações mecânicas<br>• Multimodal nativo: gerar/editar banners, mockups, ícones, transcrição de áudios de WhatsApp e análise de vídeos .mp4<br>• Revisão cruzada independente: outro modelo, outro cérebro, sem o viés de quem escreveu o código |
+
+---
+
+## Economia real de tokens e contexto
+
+- **Sua cota nobre do Claude fica preservada**: Pesquisas longas em documentações, varreduras massivas de arquivos e geração repetitiva rodam no Gemini via agy. A cota do Claude só é gasta onde o raciocínio profundo é indispensável.
+- **Contexto despoluído**: O Claude não engole centenas de linhas de logs, build ou código intermediário. A saída é resumida em até 150 linhas com o relatório limpo do Git. O texto completo fica guardado em disco (`resposta.md`), lido só se necessário.
+- **Raciocínio afiado do início ao fim**: Sessões longas continuam rápidas e baratas porque o histórico da conversa não incha com tarefas operacionais.
 
 ---
 
@@ -16,14 +40,14 @@ trabalho em volume) e serve de **revisor independente** do código.
 
 | Recurso | Como |
 |---|---|
-| **Delegar tarefas** | `agy-tarefa` roda o pedido no agy em segundo plano, com as pastas liberadas, tempo limite e regras de segurança fixas no prompt |
+| **Delegar tarefas sem gastar cota** | `agy-tarefa` roda a execução pesada no agy em segundo plano, com pastas liberadas, tempo limite e regras de segurança fixas no prompt |
 | **Não acreditar no "feito"** | Compara o git antes e depois (com o hash do conteúdo de cada arquivo) e mostra **o que mudou de verdade**. Avisa se o agy fizer commit, estourar o tempo ou responder vazio |
+| **Economia de contexto e tokens** | O Claude recebe só o essencial da resposta (até 150 linhas) e o diff limpo. Textos longos e logs ficam em arquivo para ler só se precisar |
 | **Modelo sempre atual** | `agy-modelo` lê `agy models` na hora e escolhe a versão mais nova para cada papel (código, revisão, imagem, pesquisa, rápido). Saiu um Gemini novo? É usado sem editar nada |
-| **Revisão cruzada** | `agy-revisar` manda um `git diff` para o agy revisar **só lendo** e recebe veredito e achados num formato fixo: gravidade, confiança, arquivo:linha, evidência e sugestão |
-| **Economia de contexto** | O Claude recebe só o essencial da resposta (até 150 linhas). O texto completo fica em arquivo, para ler só se precisar |
+| **Revisão cruzada independente** | `agy-revisar` manda um `git diff` para o agy revisar **só lendo** e recebe veredito e achados num formato fixo: gravidade, confiança, arquivo:linha, evidência e sugestão |
 | **Trabalho em paralelo** | A skill ensina o Claude a dividir o trabalho em partes sem arquivos em comum (um `git worktree` por parte), rodar várias ao mesmo tempo e validar cada uma antes de juntar |
 | **Imagem, áudio e vídeo** | Banner, mockup, ícone, transcrição de áudio de WhatsApp, análise de .mp4, direto do arquivo |
-| **Prestação de contas** | `agy-historico` lista as execuções com status, modelo, tempo e tokens. Cada uma guarda prompt, resposta e alterações em `~/.cache/agy-skill/execucoes/` |
+| **Prestação de contas** | `agy-historico` lista as execuções com status, modelo, tempo e tokens consumidos no agy. Cada uma guarda prompt, resposta e alterações em `~/.cache/agy-skill/execucoes/` |
 
 O Claude usa a skill sozinho quando a tarefa pede. Você também pode chamar direto:
 
@@ -34,7 +58,7 @@ O Claude usa a skill sozinho quando a tarefa pede. Você também pode chamar dir
 | `/agy:modelos` | Modelos disponíveis no agy e qual é usado em cada papel |
 | `/agy:historico [N]` | Últimas execuções e tokens gastos |
 
-Ou em texto livre: *"pede pro agy gerar o banner do README com as cores da marca"*, *"transcreve esse áudio do WhatsApp em ~/Downloads"*, *"faz uma revisão cruzada do que mudou desde a main"*.
+Ou em texto livre: *"pede pro agy refatorar esses 30 arquivos pro padrão novo"*, *"pede pro agy gerar o banner do README com as cores da marca"*, *"transcreve esse áudio do WhatsApp em ~/Downloads"*, *"faz uma revisão cruzada do que mudou desde a main"*.
 
 ---
 
