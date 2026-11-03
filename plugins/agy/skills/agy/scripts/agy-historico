@@ -1,0 +1,70 @@
+#!/usr/bin/env python3
+"""Mostra as últimas execuções do agy feitas pela skill e o total de tokens.
+
+Uso:
+  agy-historico [N]        as N execuções mais recentes (padrão 15)
+  agy-historico --json     tudo em JSON (para outro script ler)
+
+Lê os meta.json em ~/.cache/agy-skill/execucoes/ (as execuções com mais de
+30 dias são apagadas pelo agy-tarefa; mude com AGY_SKILL_RETENCAO_DIAS).
+"""
+import json
+import os
+import re
+import sys
+from collections import defaultdict
+
+BASE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+                    "agy-skill", "execucoes")
+
+
+def carregar():
+    if not os.path.isdir(BASE):
+        return []
+    execucoes = []
+    for nome in sorted(os.listdir(BASE), reverse=True):
+        meta = os.path.join(BASE, nome, "meta.json")
+        if not os.path.isfile(meta):
+            continue
+        try:
+            m = json.load(open(meta, encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        partes = re.match(r"^(\d{8})-(\d{6})-(.*?)(?:-[A-Za-z0-9]{4})?$", nome)
+        if partes:
+            d, h, rotulo = partes.groups()
+            m["quando"] = f"{d[6:8]}/{d[4:6]} {h[:2]}:{h[2:4]}"
+            m.setdefault("nome", rotulo)   # versões novas gravam o nome no meta.json
+        else:
+            m["quando"] = "?"
+            m.setdefault("nome", nome)
+        m["pasta"] = os.path.join(BASE, nome)
+        execucoes.append(m)
+    return execucoes
+
+
+def main():
+    execucoes = carregar()
+    if "--json" in sys.argv:
+        print(json.dumps(execucoes, ensure_ascii=False, indent=2))
+        return
+    n = int(next((a for a in sys.argv[1:] if a.isdigit()), 15))
+    if not execucoes:
+        print(f"Nenhuma execução registrada em {BASE}")
+        return
+    print(f"{'quando':<12} {'status':<15} {'modelo':<26} {'tempo':>6} {'tokens':>9}  nome")
+    for m in execucoes[:n]:
+        tokens = m.get("tokens")
+        print(f"{m['quando']:<12} {str(m.get('status')):<15} {str(m.get('modelo')):<26} "
+              f"{str(m.get('duracao_s', '?')) + 's':>6} {tokens if tokens is not None else '-':>9}  {m['nome']}")
+    por_modelo = defaultdict(lambda: [0, 0])
+    for m in execucoes:
+        por_modelo[m.get("modelo")][0] += 1
+        por_modelo[m.get("modelo")][1] += m.get("tokens") or 0
+    print(f"\nTotal guardado: {len(execucoes)} execuções")
+    for modelo, (qtd, tok) in sorted(por_modelo.items(), key=lambda x: -x[1][1]):
+        print(f"  {str(modelo):<26} {qtd:>4} execuções  {tok:>10} tokens")
+
+
+if __name__ == "__main__":
+    main()
