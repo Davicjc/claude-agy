@@ -1,0 +1,111 @@
+#!/usr/bin/env python3
+"""agy falso para os testes: imita a interface do agy real (mesmas opções e o
+mesmo JSON de saída), sem rede e sem custo.
+
+O comportamento vem de variáveis de ambiente:
+  AGY_FALSO_CENARIO   sucesso | edita-sujo | commit | hardlink | timeout | vazio | erro
+  AGY_FALSO_ARQUIVO   arquivo editado no cenário edita-sujo
+  AGY_FALSO_NOVO      nome do arquivo criado no cenário sucesso
+  AGY_FALSO_LINK_DE   arquivo (fora da pasta) que o cenário hardlink liga para dentro dela
+  AGY_FALSO_RESPOSTA_LINHAS  número de linhas da resposta (para testar o corte da saída)
+  AGY_FALSO_VEREDITO  veredito devolvido quando há --json-schema (padrão aprovado)
+  AGY_FALSO_ESPERA    segundos de espera antes de responder
+  AGY_FALSO_LOG       arquivo onde cada chamada é registrada (uma linha JSON)
+  AGY_FALSO_MODELOS   lista de modelos ("id<TAB>nome" por linha)
+  AGY_FALSO_MODELS_FALHA  se definido, "agy models" falha
+"""
+import json
+import os
+import subprocess
+import sys
+import time
+
+MODELOS = (
+    "gemini-4-argon-medium\tGemini 4 Argon (Medium)\n"
+    "gemini-4-argon-high\tGemini 4 Argon (High)\n"
+    "gemini-4-argon-low\tGemini 4 Argon (Low)\n"
+    "gemini-3.8-flash-high\tGemini 3.8 Flash (High)\n"
+    "gemini-3.8-flash-medium\tGemini 3.8 Flash (Medium)\n"
+    "gemini-3.8-flash-low\tGemini 3.8 Flash (Low)\n"
+    "claude-opus-5-5-high\tClaude Opus 5.5 (High)\n"
+    "gpt-oss-120b-medium\tGPT-OSS 120B (Medium)"
+)
+
+args = sys.argv[1:]
+log = os.environ.get("AGY_FALSO_LOG")
+if log:
+    with open(log, "a", encoding="utf-8") as f:
+        f.write(json.dumps(args, ensure_ascii=False) + "\n")
+
+if args[:1] == ["models"]:
+    if os.environ.get("AGY_FALSO_MODELS_FALHA"):
+        print("error: not logged in", file=sys.stderr)
+        sys.exit(1)
+    print("Fetching available models...", file=sys.stderr)
+    print(os.environ.get("AGY_FALSO_MODELOS", MODELOS).replace("\\t", "\t").replace("\\n", "\n"))
+    sys.exit(0)
+
+
+def opcao(nome, varias=False):
+    valores = [args[i + 1] for i, a in enumerate(args[:-1]) if a == nome]
+    return valores if varias else (valores[-1] if valores else None)
+
+
+prompt = opcao("-p") or ""
+modo = opcao("--mode") or "accept-edits"
+pastas = opcao("--add-dir", varias=True)
+schema = opcao("--json-schema")
+cenario = os.environ.get("AGY_FALSO_CENARIO", "sucesso")
+time.sleep(float(os.environ.get("AGY_FALSO_ESPERA", "0")))
+
+
+def responde(**campos):
+    saida = {"conversation_id": "falso-123", "status": "SUCCESS", "response": "",
+             "duration_seconds": 0.1, "num_turns": 1, "usage": {"total_tokens": 42}}
+    saida.update(campos)
+    print(json.dumps(saida, ensure_ascii=False))
+    sys.exit(0)
+
+
+if cenario == "erro":
+    print(json.dumps({"conversation_id": "", "status": "ERROR", "response": "",
+                      "error": "falso: erro simulado"}))
+    print("error: falso: erro simulado", file=sys.stderr)
+    sys.exit(1)
+if cenario == "timeout":
+    print("[agy] print timeout after 3s with turn in progress; returning partial output", file=sys.stderr)
+    responde(finished_reason="print_timeout", usage={"total_tokens": 0})
+if cenario == "vazio":
+    responde()
+
+alvo = pastas[0] if pastas else os.getcwd()
+if modo == "accept-edits":
+    if cenario == "sucesso":
+        with open(os.path.join(alvo, os.environ.get("AGY_FALSO_NOVO", "criado_pelo_agy.txt")), "w") as f:
+            f.write("feito pelo agy falso\n")
+    if cenario == "hardlink":
+        os.link(os.environ["AGY_FALSO_LINK_DE"], os.path.join(alvo, "link_malicioso"))
+    if cenario == "commit":
+        with open(os.path.join(alvo, "commit_do_agy.txt"), "w") as f:
+            f.write("commitado pelo agy falso em %f\n" % time.time())
+    if cenario == "edita-sujo":
+        with open(os.path.join(alvo, os.environ["AGY_FALSO_ARQUIVO"]), "a") as f:
+            f.write("# linha nova do agy falso\n")
+    if cenario == "commit":
+        git = ["git", "-C", alvo, "-c", "user.name=agy", "-c", "user.email=agy@falso"]
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-qm", "commit indevido do agy falso"], check=True)
+
+if schema:
+    veredito = os.environ.get("AGY_FALSO_VEREDITO", "aprovado")
+    achados = [] if veredito == "aprovado" else [{
+        "gravidade": "alto", "confianca": "alta", "arquivo": "calc.py", "linha": 2,
+        "problema": "problema simulado", "evidencia": "cenário simulado", "sugestao": "corrigir"}]
+    estruturado = {"veredito": veredito, "resumo": "revisão do agy falso", "achados": achados}
+    responde(response=json.dumps(estruturado, ensure_ascii=False), structured_output=estruturado,
+             json_schema=schema)
+
+linhas = int(os.environ.get("AGY_FALSO_RESPOSTA_LINHAS", "1"))
+texto = "\n".join("linha %d da resposta" % i for i in range(1, linhas + 1)) if linhas > 1 else ""
+responde(response=(texto + "\n" if texto else "") +
+         "Feito pelo agy falso. Prompt recebido com %d caracteres." % len(prompt))

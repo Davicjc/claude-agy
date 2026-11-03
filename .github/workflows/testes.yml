@@ -1,0 +1,49 @@
+name: testes
+
+on:
+  push:
+  pull_request:
+
+# Só lê o código; não precisa de nenhuma outra permissão.
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    name: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # O macOS vem com bash 3.2; o runner tem um bash novo do Homebrew na frente do PATH.
+      # Força o 3.2 para provar que os scripts funcionam no Mac de fábrica.
+      - name: Usar o bash 3.2 do sistema (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          mkdir -p "$HOME/bash32"
+          ln -sf /bin/bash "$HOME/bash32/bash"
+          echo "$HOME/bash32" >> "$GITHUB_PATH"
+
+      - name: Versões
+        run: |
+          bash --version | head -1
+          python3 --version
+          git --version
+          command -v timeout || command -v gtimeout || echo "sem timeout/gtimeout (o script usa só o limite do agy)"
+
+      - name: ShellCheck
+        if: runner.os == 'Linux'
+        run: shellcheck -s bash plugins/agy/skills/agy/scripts/agy-tarefa plugins/agy/skills/agy/scripts/agy-revisar tests/rodar.sh
+
+      - name: Testes como usuário comum (agy falso)
+        run: bash tests/rodar.sh
+
+      # Os testes de dono de arquivo, hardlink e recusa do git só rodam como root,
+      # que é o cenário de quem usa "sudo claude".
+      - name: Testes como root (Linux)
+        if: runner.os == 'Linux'
+        run: sudo env "PATH=$PATH" bash tests/rodar.sh
