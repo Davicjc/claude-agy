@@ -1,6 +1,6 @@
 {
   "name": "agy",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Claude + agy (Antigravity/Gemini) trabalhando juntos: delegar tarefas, paralelizar, imagem/áudio/vídeo e revisão cruzada de código, com o modelo mais novo escolhido na hora.",
   "author": {
     "name": "Davi Castro",
@@ -10,5 +10,12 @@
   "homepage": "https://github.com/Davicjc/claude-agy",
   "repository": "https://github.com/Davicjc/claude-agy",
   "license": "MIT",
-  "keywords": ["agy", "antigravity", "gemini", "delegacao", "revisao-de-codigo", "multi-agente"]
+  "keywords": [
+    "agy",
+    "antigravity",
+    "gemini",
+    "delegacao",
+    "revisao-de-codigo",
+    "multi-agente"
+  ]
 }

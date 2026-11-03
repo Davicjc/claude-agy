@@ -13,5 +13,9 @@
 | Revisão sem `estruturado.json` | O modelo não seguiu o schema ou a resposta foi cortada | Repita com `--papel revisao` (esforço alto) ou diminua o diff (`--intervalo`) |
 | A resposta fala de arquivos com `file:///` | Normal: o agy gera links locais | Leia os arquivos pelo caminho normal |
 | Pede permissão e trava | Modo interativo acidental | Os scripts usam `-p` (sem perguntas). Não use `--dangerously-skip-permissions` |
+| `Permission denied` ou git "insufficient permission" depois do agy | Arquivos criados como root numa pasta de outro usuário (ex.: Claude rodando com `sudo`) | O `agy-tarefa` já devolve esses arquivos ao dono da pasta. Se usou `--manter-donos`: `sudo chown -R usuario:usuario <pasta>` |
+| `Argument list too long` | Pedido acima de 128 KB passado direto ao agy | O `agy-tarefa` já entrega pedidos grandes por arquivo. Se chamar o agy na mão, faça o mesmo |
+| No macOS, nada interrompe uma tarefa travada | O Mac não tem o comando `timeout` | O script usa o limite do próprio agy (`--print-timeout`). Para ter também a rede de segurança externa: `brew install coreutils` (instala o `gtimeout`) |
+| A pasta `~/.cache/agy-skill/execucoes` cresce | Uma pasta por execução | Execuções com mais de 30 dias são apagadas sozinhas; `AGY_SKILL_RETENCAO_DIAS=7` encurta |
 
 Os registros de cada execução ficam em `~/.cache/agy-skill/execucoes/<data>-<nome>/` (`prompt.md`, `resultado.json`, `resposta.md`, `alteracoes.txt`, `stderr.log`, `meta.json`). Comece por `stderr.log` e `resultado.json`.

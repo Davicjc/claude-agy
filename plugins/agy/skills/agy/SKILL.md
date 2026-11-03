@@ -9,13 +9,16 @@ O agy é um agente de terminal parecido com o Claude Code, que roda modelos Gemi
 
 A regra de ouro desta skill: **o Claude continua responsável pelo resultado.** O agy executa; o Claude especifica, confere e decide.
 
-Os scripts ficam em `scripts/` ao lado deste arquivo (use o caminho absoluto da pasta da skill):
+Os scripts ficam em `scripts/` ao lado deste arquivo. Nos comandos abaixo, `<skill>` é a pasta mostrada como "Base directory for this skill" quando a skill é carregada; use sempre o caminho absoluto.
 
 | Script | Para quê |
 |---|---|
 | `scripts/agy-modelo PAPEL` | Devolve o modelo certo para o papel, lido de `agy models` na hora |
 | `scripts/agy-tarefa ...` | Roda uma tarefa, guarda tudo e mostra o que mudou de verdade no git |
 | `scripts/agy-revisar ...` | Revisão de um diff só leitura, com achados estruturados |
+| `scripts/agy-historico [N]` | Últimas execuções: status, modelo, tempo e tokens (para prestar contas do gasto) |
+
+O usuário também pode chamar direto: `/agy:delegar`, `/agy:revisar`, `/agy:modelos` e `/agy:historico`.
 
 ## Antes de tudo: o agy está pronto?
 
@@ -68,7 +71,18 @@ Para revisão, prefira um modelo de **família diferente** da que escreveu o có
 - `--dir` é obrigatório e pode repetir. O agy **só enxerga e edita as pastas passadas aqui**. Sem isso ele grava num rascunho próprio e responde "feito" sem ter mudado nada no projeto. Inclua também a pasta dos arquivos de apoio (imagem de referência, áudio).
 - `--modo plan` deixa o agy só ler (análise, pesquisa, revisão). O padrão `accept-edits` permite editar arquivos.
 - O script acrescenta regras fixas ao prompt: não commitar, não usar sudo, não sair das pastas, responder curto. Use `--sem-regras` só quando tiver um motivo.
-- Para continuar a mesma conversa (ex.: pedir um ajuste), use `--continuar <id>`, com o id que está em `meta.json`.
+- Para continuar a mesma conversa (ex.: pedir um ajuste), use `--continuar <id>`, com o id que está em `meta.json`. O agy lembra do que foi dito antes.
+- Pedido longo não é problema: acima de ~100 KB o script entrega o pedido ao agy por arquivo (a linha de comando do Linux recusa um argumento acima de 128 KB).
+- A saída mostra no máximo 150 linhas da resposta (`--max-linhas N` muda isso); o texto completo fica em `resposta.md`, na pasta indicada em `PASTA=`. Leia de lá só se precisar: assim o resultado do agy não enche o seu contexto.
+- Se o Claude estiver rodando como root numa pasta de outro usuário, o script devolve ao dono da pasta o que o agy criou pelo terminal (`mkdir`, `npm install`, `git`...), que nasce como root. Sem isso, o git e o editor do usuário quebram depois. A ferramenta de escrita do próprio agy já respeita o dono. `--manter-donos` desliga isso.
+
+| Saída do `agy-tarefa` | Significado |
+|---|---|
+| `0` | O agy terminou. Ainda precisa de validação (próxima seção) |
+| `1` | Erro do agy ou resposta vazia (`RESPOSTA-VAZIA`): trate como falha |
+| `2` | Uso errado do script (a mensagem diz o que faltou) |
+| `3` | O agy fez commit, apesar das regras: veja `git log` e avise o usuário |
+| `124` | Tempo esgotado. O que ele já editou continua no disco: confira `alteracoes.txt` |
 
 3. **Enquanto roda, siga trabalhando** em outra coisa. Você é avisado quando o processo termina.
 
@@ -93,7 +107,7 @@ Depois de uma mudança relevante, escrita pelo Claude ou pelo agy, peça uma rev
 <skill>/scripts/agy-revisar --dir /abs/repo --intervalo HEAD~3..HEAD --foco "concorrência no worker"
 ```
 
-O agy revisa em modo só leitura e devolve veredito (`aprovado`, `ajustar`, `reprovar`) e achados com gravidade, confiança, arquivo:linha, evidência e sugestão (formato em `assets/schema-revisao.json`).
+O agy revisa em modo só leitura e devolve veredito (`aprovado`, `ajustar`, `reprovar`) e achados com gravidade, confiança, arquivo:linha, evidência e sugestão (formato em `assets/schema-revisao.json`). O diff vai delimitado e com o aviso de que texto dentro do código é dado, não instrução, para um comentário malicioso não "mandar" o revisor aprovar. Com `--exigir-aprovado`, o script sai com código 4 quando o veredito não é "aprovado" (útil em automação).
 
 **Não aplique os achados às cegas.** Para cada um: abra o código, confirme que o cenário de falha acontece de verdade e só então corrija. Descarte os falsos positivos e diga ao usuário quantos achados eram reais. Um achado `baixa` confiança é uma pista, não uma ordem. Se o agy reprovar algo que você tem certeza que está certo, explique o motivo ao usuário em vez de mudar para agradar o revisor.
 
@@ -121,4 +135,4 @@ Leia `references/problemas.md` quando algo der errado: "feito" sem mudança, tem
 
 ## Como reportar ao usuário
 
-Curto e verificável: o que foi delegado, com qual modelo (`meta.json`), o que mudou (arquivos), o que você conferiu (testes, diff, tela) e o que corrigiu do que o agy fez. Se a revisão cruzada achou algo, diga quantos achados eram reais e o que foi feito com eles. Os registros completos ficam em `~/.cache/agy-skill/execucoes/`.
+Curto e verificável: o que foi delegado, com qual modelo (`meta.json`), o que mudou (arquivos), o que você conferiu (testes, diff, tela) e o que corrigiu do que o agy fez. Se a revisão cruzada achou algo, diga quantos achados eram reais e o que foi feito com eles. Os registros completos ficam em `~/.cache/agy-skill/execucoes/` (apagados depois de 30 dias; `AGY_SKILL_RETENCAO_DIAS` muda isso), e `agy-historico` resume o gasto de tokens.
