@@ -1,0 +1,22 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "davicjc",
+  "description": "Plugins do Davi Castro para o Claude Code",
+  "owner": {
+    "name": "Davi Castro",
+    "email": "contato@davicjc.com"
+  },
+  "plugins": [
+    {
+      "name": "agy",
+      "description": "Claude + agy (Antigravity/Gemini) trabalhando juntos: delegar tarefas, paralelizar, imagem/áudio/vídeo e revisão cruzada de código, com o modelo mais novo escolhido na hora.",
+      "author": {
+        "name": "Davi Castro",
+        "email": "contato@davicjc.com"
+      },
+      "source": "./plugins/agy",
+      "category": "productivity",
+      "homepage": "https://github.com/Davicjc/claude-agy"
+    }
+  ]
+}

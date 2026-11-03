@@ -1,0 +1,225 @@
+#!/usr/bin/env bash
+# Roda uma tarefa no agy (Gemini) de forma rastreável e verificável.
+#
+# Uso:
+#   agy-tarefa --dir /caminho/projeto [--dir /outra/pasta] \
+#              (--prompt "texto" | --prompt-arquivo arquivo.md) \
+#              [--papel codigo|revisao|imagem|rapido|pesquisa] [--modelo ID] \
+#              [--modo accept-edits|plan] [--esforco low|medium|high|xhigh|max] \
+#              [--timeout SEGUNDOS] [--schema schema.json] [--nome rotulo] \
+#              [--continuar ID_DA_CONVERSA] [--sem-regras]
+#
+# Cada execução vira uma pasta em ~/.cache/agy-skill/execucoes/ com:
+#   prompt.md       o prompt exato enviado
+#   resultado.json  a saída JSON do agy (status, resposta, tokens, conversa)
+#   resposta.md     só a resposta em texto
+#   alteracoes.txt  arquivos que mudaram de verdade em cada --dir (via git)
+#   stderr.log      erros do agy
+# A última linha impressa é "PASTA=<caminho>", para quem chamou achar tudo.
+#
+# Códigos de saída: 0 ok, 1 erro do agy, 2 uso errado, 124 tempo esgotado,
+#                   3 ok mas o agy fez commit (não deveria).
+set -uo pipefail
+
+AQUI="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+dirs=(); prompt=""; prompt_arquivo=""; papel="codigo"; modelo=""; modo="accept-edits"
+esforco=""; tempo=2400; schema=""; nome="tarefa"; continuar=""; regras=1
+
+erro_uso() { echo "agy-tarefa: $*" >&2; exit 2; }
+uso() { sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 2; }
+valor() { [ $# -ge 2 ] && [ -n "$2" ] || erro_uso "falta o valor de $1"; }
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dir) valor "$@"; d="$(readlink -f -- "$2")" || erro_uso "caminho inválido: $2"; dirs+=("$d"); shift 2 ;;
+        --prompt) valor "$@"; prompt="$2"; shift 2 ;;
+        --prompt-arquivo) valor "$@"; prompt_arquivo="$2"; shift 2 ;;
+        --papel) valor "$@"; papel="$2"; shift 2 ;;
+        --modelo) valor "$@"; modelo="$2"; shift 2 ;;
+        --modo) valor "$@"; modo="$2"; shift 2 ;;
+        --esforco) valor "$@"; esforco="$2"; shift 2 ;;
+        --timeout) valor "$@"; tempo="$2"; shift 2 ;;
+        --schema) valor "$@"; schema="$(readlink -f -- "$2")" || erro_uso "caminho inválido: $2"; shift 2 ;;
+        --nome) valor "$@"; nome="$2"; shift 2 ;;
+        --continuar) valor "$@"; continuar="$2"; shift 2 ;;
+        --sem-regras) regras=0; shift ;;
+        -h|--help) uso ;;
+        *) echo "agy-tarefa: opção desconhecida: $1" >&2; uso ;;
+    esac
+done
+
+command -v agy >/dev/null || erro_uso "o agy não está instalado ou não está no PATH"
+if [ -n "$prompt_arquivo" ]; then
+    [ -f "$prompt_arquivo" ] || erro_uso "não achei $prompt_arquivo"
+    prompt="$(cat -- "$prompt_arquivo")"
+fi
+[ -n "$prompt" ] || erro_uso "falta --prompt ou --prompt-arquivo"
+case "$modo" in accept-edits|plan) ;; *) erro_uso "--modo deve ser accept-edits ou plan" ;; esac
+[[ "$tempo" =~ ^[1-9][0-9]*$ ]] || erro_uso "--timeout deve ser um número inteiro de segundos (ex.: 2400)"
+[ -z "$schema" ] || [ -f "$schema" ] || erro_uso "não achei o schema $schema"
+# Sem --add-dir o agy grava no rascunho dele e diz "feito" sem ter feito nada.
+[ "${#dirs[@]}" -gt 0 ] || erro_uso "passe ao menos um --dir (o agy só enxerga/edita as pastas adicionadas)"
+for d in "${dirs[@]}"; do [ -d "$d" ] || erro_uso "pasta não existe: $d"; done
+if [ -z "$modelo" ]; then modelo="$("$AQUI/agy-modelo" "$papel")" || exit 2; fi
+
+slug="$(printf '%s' "$nome" | tr -cs 'A-Za-z0-9' '-' | tr 'A-Z' 'a-z' | cut -c1-40)"
+slug="${slug%-}"; slug="${slug#-}"; [ -n "$slug" ] || slug="tarefa"
+base="${XDG_CACHE_HOME:-$HOME/.cache}/agy-skill/execucoes"
+mkdir -p "$base"
+# mktemp garante pasta única mesmo com várias tarefas no mesmo segundo
+pasta="$(mktemp -d "$base/$(date +%Y%m%d-%H%M%S)-$slug-XXXX")" || erro_uso "não consegui criar a pasta de registro em $base"
+
+if [ "$regras" -eq 1 ]; then
+    lista_dirs="$(printf -- '  - %s\n' "${dirs[@]}")"
+    prompt="$prompt
+
+---
+Regras fixas desta tarefa (vindas do orquestrador):
+- Trabalhe só dentro destas pastas:
+$lista_dirs
+- Não rode git commit, git push, git reset, git checkout de arquivos nem nada que apague trabalho.
+- Não instale pacotes no sistema e não use sudo.
+- Se algo impedir a tarefa, pare e explique o motivo em vez de improvisar.
+- No fim, responda curto: o que fez, os arquivos que criou ou alterou e como verificar."
+fi
+printf '%s\n' "$prompt" > "$pasta/prompt.md"
+
+# "Foto" de uma pasta: HEAD + cada arquivo sujo/novo com o hash do conteúdo.
+# Com o hash, uma nova edição num arquivo que já estava modificado também aparece.
+foto() {
+    python3 -I - "$1" <<'PYEOF'
+import os, subprocess, sys
+d = sys.argv[1]
+def git(*a):
+    return subprocess.run(["git", "-C", d, *a], capture_output=True)
+if git("rev-parse", "--is-inside-work-tree").returncode != 0:
+    print("NAO-GIT"); sys.exit()
+head = git("rev-parse", "HEAD")
+print(head.stdout.decode().strip() if head.returncode == 0 else "sem-commits")
+raiz = git("rev-parse", "--show-toplevel").stdout.decode().strip()
+saida = git("status", "--porcelain=v1", "-uall", "-z").stdout.decode("utf-8", "replace")
+itens = saida.split("\0")
+i = 0
+while i < len(itens):
+    item = itens[i]; i += 1
+    if len(item) < 4:
+        continue
+    xy, caminho = item[:2], item[3:]
+    if xy[0] in "RC":          # renomeado/copiado: o próximo item é o nome antigo
+        i += 1
+    alvo = os.path.join(raiz, caminho)
+    if os.path.isfile(alvo):
+        h = subprocess.run(["git", "hash-object", "--", alvo], capture_output=True).stdout.decode().strip()
+    else:
+        h = "-"
+    print(f"{xy}\t{h}\t{caminho}")
+PYEOF
+}
+declare -A antes
+for d in "${dirs[@]}"; do antes["$d"]="$(foto "$d")"; done
+
+cmd=(agy -p "$prompt" --mode "$modo" --model "$modelo" --output-format json --print-timeout "${tempo}s")
+for d in "${dirs[@]}"; do cmd+=(--add-dir "$d"); done
+[ -n "$esforco" ] && cmd+=(--effort "$esforco")
+[ -n "$schema" ] && cmd+=(--json-schema "$schema")
+[ -n "$continuar" ] && cmd+=(--conversation "$continuar")
+
+inicio=$(date +%s)
+# O timeout do próprio agy (--print-timeout) responde com JSON; o externo é a rede de segurança.
+timeout --kill-after=30 "$((tempo + 60))" "${cmd[@]}" > "$pasta/resultado.json" 2> "$pasta/stderr.log"
+codigo=$?
+duracao=$(( $(date +%s) - inicio ))
+
+# O que mudou em cada pasta
+commit_feito=0
+{
+    for d in "${dirs[@]}"; do
+        depois="$(foto "$d")"
+        echo "## $d"
+        if [ "${antes[$d]}" = "NAO-GIT" ]; then
+            echo "(não é repositório git: confira os arquivos à mão)"
+            echo
+            continue
+        fi
+        head_antes="$(printf '%s\n' "${antes[$d]}" | head -1)"
+        head_depois="$(printf '%s\n' "$depois" | head -1)"
+        if [ "$head_antes" != "$head_depois" ]; then
+            echo "ALERTA: o HEAD mudou ($head_antes -> $head_depois): o agy fez commit ou trocou de branch"
+            commit_feito=1
+            if git -C "$d" merge-base --is-ancestor "$head_antes" "$head_depois" 2>/dev/null; then
+                echo "Commits feitos pelo agy:"
+                git -C "$d" log --format='  %h %s' "$head_antes..$head_depois"
+                echo "Arquivos nesses commits:"
+                git -C "$d" diff --name-status "$head_antes" "$head_depois" | sed 's/^/  /'
+            fi
+        fi
+        # Compara arquivo a arquivo (estado + hash). Lista o que surgiu, mudou ou voltou ao normal.
+        python3 -I - <(printf '%s\n' "${antes[$d]}" | tail -n +2) <(printf '%s\n' "$depois" | tail -n +2) <<'PYEOF'
+import sys
+def ler(p):
+    r = {}
+    for linha in open(p, encoding="utf-8", errors="replace"):
+        partes = linha.rstrip("\n").split("\t", 2)
+        if len(partes) == 3:
+            r[partes[2]] = (partes[0], partes[1])
+    return r
+a, b = ler(sys.argv[1]), ler(sys.argv[2])
+mudou = False
+for caminho in sorted(set(a) | set(b)):
+    if a.get(caminho) == b.get(caminho):
+        continue
+    mudou = True
+    if caminho not in a:
+        print(f"{b[caminho][0]} {caminho}")
+    elif caminho not in b:
+        print(f"(voltou ao estado do commit ou foi removido) {caminho}")
+    else:
+        print(f"{b[caminho][0]} {caminho}  (já estava alterado antes; o conteúdo mudou de novo)")
+if not mudou:
+    print("(nenhuma alteração detectada pelo git status)")
+PYEOF
+        echo
+    done
+} > "$pasta/alteracoes.txt"
+
+# Resumo, resposta e metadados
+status="$(python3 -I - "$pasta" "$modelo" "$papel" "$modo" "$duracao" "$codigo" "$tempo" <<'PYEOF'
+import json, os, sys
+pasta, modelo, papel, modo, duracao, codigo, tempo = sys.argv[1:]
+try:
+    d = json.load(open(os.path.join(pasta, "resultado.json")))
+except Exception:
+    d = {}
+resposta = d.get("response") or d.get("error") or ""
+open(os.path.join(pasta, "resposta.md"), "w").write(resposta)
+if d.get("structured_output") is not None:
+    json.dump(d["structured_output"], open(os.path.join(pasta, "estruturado.json"), "w"),
+              ensure_ascii=False, indent=2)
+status = d.get("status") or "SEM-JSON"
+erro = (d.get("error") or "").lower()
+# Tempo esgotado: o agy responde status SUCCESS com finished_reason "print_timeout"
+# e a resposta vazia ou parcial; o timeout externo dá 124/137.
+if (int(codigo) in (124, 137) or d.get("finished_reason") == "print_timeout"
+        or (status != "SUCCESS" and any(p in erro for p in ("timeout", "timed out", "deadline")))):
+    status = "TEMPO-ESGOTADO"
+elif status == "SUCCESS" and not resposta.strip() and d.get("structured_output") is None:
+    status = "RESPOSTA-VAZIA"   # "sucesso" sem nada escrito não serve como prova de nada
+u = d.get("usage") or {}
+json.dump({"modelo": modelo, "papel": papel, "modo": modo, "duracao_s": int(duracao),
+           "codigo_saida_agy": int(codigo), "status": status, "conversa": d.get("conversation_id"),
+           "tokens": u.get("total_tokens")},
+          open(os.path.join(pasta, "meta.json"), "w"), ensure_ascii=False, indent=2)
+print(status)
+PYEOF
+)"
+
+echo "=== agy-tarefa: $status | modelo $modelo | modo $modo | ${duracao}s ==="
+cat "$pasta/resposta.md"; echo
+echo "--- arquivos alterados (git) ---"; cat "$pasta/alteracoes.txt"
+echo "PASTA=$pasta"
+
+case "$status" in
+    TEMPO-ESGOTADO) exit 124 ;;
+    SUCCESS) [ "$commit_feito" -eq 1 ] && exit 3; exit 0 ;;
+    *) exit 1 ;;
+esac

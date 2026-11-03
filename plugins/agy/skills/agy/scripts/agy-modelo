@@ -1,0 +1,120 @@
+#!/usr/bin/env python3
+"""Escolhe o modelo do agy para cada papel, lendo `agy models` na hora.
+
+Nada de nome fixo: a lista vem do próprio agy, então quando sair um modelo
+novo (ex.: gemini-5-*) ele passa a ser usado sozinho, sem editar a skill.
+
+Uso:
+  agy-modelo PAPEL            imprime o id do modelo (codigo, revisao, imagem,
+                              rapido, pesquisa)
+  agy-modelo --listar         tabela: todos os modelos e o escolhido por papel
+  agy-modelo --json           o mesmo em JSON
+  agy-modelo --atualizar ...  ignora o cache e consulta o agy de novo
+
+Para forçar um modelo: AGY_MODELO_<PAPEL>=<id>  (ex.: AGY_MODELO_CODIGO=...)
+ou AGY_MODELO=<id> para todos os papéis.
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+                     "agy-skill", "modelos.tsv")
+CACHE_SEGUNDOS = 3600
+
+# Papel -> (família, esforços em ordem de preferência)
+# "pro"   = família principal do Gemini (hoje "argon"), boa para código e análise
+# "flash" = família rápida e barata
+PAPEIS = {
+    "codigo": ("pro", ["high", "medium", "low"]),
+    "revisao": ("pro", ["high", "medium", "low"]),
+    "pesquisa": ("pro", ["medium", "high", "low"]),
+    "imagem": ("pro", ["medium", "high", "low"]),
+    "rapido": ("flash", ["medium", "low", "high"]),
+}
+ESFORCOS = ("xhigh", "max", "high", "medium", "low")
+
+
+def ler_modelos(atualizar=False):
+    if not atualizar and os.path.exists(CACHE) and time.time() - os.path.getmtime(CACHE) < CACHE_SEGUNDOS:
+        with open(CACHE, encoding="utf-8") as f:
+            linhas = f.read().splitlines()
+    else:
+        try:
+            saida = subprocess.run(["agy", "models"], capture_output=True, text=True, timeout=90)
+        except (OSError, subprocess.TimeoutExpired) as erro:
+            sys.exit(f"agy-modelo: não consegui rodar 'agy models' ({erro})")
+        linhas = [l for l in saida.stdout.splitlines() if "\t" in l]
+        if not linhas:
+            motivo = "agy-modelo: 'agy models' não devolveu nada (agy logado?)\n" + saida.stderr.strip()
+            # Com --atualizar a pessoa quer a verdade de agora: nada de cache antigo.
+            if atualizar or not os.path.exists(CACHE):
+                sys.exit(motivo)
+            print("agy-modelo: aviso: 'agy models' falhou, usando a última lista salva", file=sys.stderr)
+            with open(CACHE, encoding="utf-8") as f:
+                linhas = f.read().splitlines()
+        else:
+            os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+            with open(CACHE, "w", encoding="utf-8") as f:
+                f.write("\n".join(linhas) + "\n")
+    modelos = []
+    for linha in linhas:
+        ident, _, nome = linha.partition("\t")
+        modelos.append({"id": ident.strip(), "nome": nome.strip()})
+    return modelos
+
+
+def analisar(ident):
+    """Quebra 'gemini-4-argon-high' em provedor, versão, família e esforço."""
+    partes = ident.split("-")
+    provedor = partes[0]
+    esforco = partes[-1] if partes[-1] in ESFORCOS else ""
+    resto = partes[1:-1] if esforco else partes[1:]
+    versao = next((tuple(int(n) for n in p.split(".")) for p in resto if re.fullmatch(r"\d+(\.\d+)*", p)), (0,))
+    familia = "flash" if any("flash" in p or "lite" in p for p in resto) else "pro"
+    return {"provedor": provedor, "versao": versao, "familia": familia, "esforco": esforco}
+
+
+def escolher(papel, modelos):
+    if papel not in PAPEIS:
+        sys.exit(f"agy-modelo: papel desconhecido '{papel}'. Use: {', '.join(PAPEIS)}")
+    forcado = os.environ.get(f"AGY_MODELO_{papel.upper()}") or os.environ.get("AGY_MODELO")
+    if forcado:
+        return forcado
+    familia, esforcos = PAPEIS[papel]
+    gemini = [(m, analisar(m["id"])) for m in modelos if m["id"].startswith("gemini-")]
+    candidatos = [x for x in gemini if x[1]["familia"] == familia] or gemini
+    if not candidatos:
+        sys.exit("agy-modelo: nenhum modelo Gemini na lista do agy")
+    mais_nova = max(x[1]["versao"] for x in candidatos)
+    da_versao = [x for x in candidatos if x[1]["versao"] == mais_nova]
+    for esforco in esforcos:
+        for modelo, info in da_versao:
+            if info["esforco"] == esforco:
+                return modelo["id"]
+    return da_versao[0][0]["id"]
+
+
+def main():
+    args = [a for a in sys.argv[1:] if a != "--atualizar"]
+    modelos = ler_modelos(atualizar="--atualizar" in sys.argv)
+    if not args or args[0] in ("--listar", "--json"):
+        escolhas = {p: escolher(p, modelos) for p in PAPEIS}
+        if args and args[0] == "--json":
+            print(json.dumps({"papeis": escolhas, "modelos": modelos}, ensure_ascii=False, indent=2))
+            return
+        print("Escolha por papel:")
+        for papel, ident in escolhas.items():
+            print(f"  {papel:<9} {ident}")
+        print("\nModelos disponíveis no agy:")
+        for m in modelos:
+            print(f"  {m['id']:<28} {m['nome']}")
+        return
+    print(escolher(args[0], modelos))
+
+
+if __name__ == "__main__":
+    main()

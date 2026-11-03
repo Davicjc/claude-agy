@@ -1,0 +1,122 @@
+#!/usr/bin/env bash
+# Segunda opinião: o agy revisa um diff só lendo (modo plan) e devolve achados
+# estruturados (gravidade, arquivo, linha, evidência, sugestão).
+#
+# Uso:
+#   agy-revisar [--dir REPO] [--base REF | --intervalo A..B] [--foco "texto"]
+#               [--papel revisao] [--modelo ID] [--timeout SEGUNDOS]
+#
+#   sem --base/--intervalo : revisa tudo que mudou em relação ao HEAD,
+#                            incluindo arquivos novos ainda não rastreados
+#   --base main            : revisa o que mudou desde main (commits + disco)
+#   --intervalo A..B       : revisa só os commits entre A e B
+#
+# Saída: lista legível dos achados + "PASTA=..." (estruturado.json lá dentro).
+# Código de saída 0 se a revisão rodou (leia o veredito), 1 se o agy falhou.
+set -uo pipefail
+
+AQUI="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+repo="$PWD"; base=""; intervalo=""; foco=""; papel="revisao"; modelo=""; tempo=1200
+erro_uso() { echo "agy-revisar: $*" >&2; exit 2; }
+valor() { [ $# -ge 2 ] && [ -n "$2" ] || erro_uso "falta o valor de $1"; }
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --dir) valor "$@"; repo="$(readlink -f -- "$2")" || erro_uso "caminho inválido: $2"; shift 2 ;;
+        --base) valor "$@"; base="$2"; shift 2 ;;
+        --intervalo) valor "$@"; intervalo="$2"; shift 2 ;;
+        --foco) valor "$@"; foco="$2"; shift 2 ;;
+        --papel) valor "$@"; papel="$2"; shift 2 ;;
+        --modelo) valor "$@"; modelo="$2"; shift 2 ;;
+        --timeout) valor "$@"; tempo="$2"; shift 2 ;;
+        -h|--help) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        *) erro_uso "opção desconhecida: $1" ;;
+    esac
+done
+git -C "$repo" rev-parse --is-inside-work-tree >/dev/null 2>&1 || erro_uso "$repo não é um repositório git"
+[ -z "$base" ] || [ -z "$intervalo" ] || erro_uso "use --base ou --intervalo, não os dois"
+
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+: > "$tmp/arquivos"
+if [ -n "$intervalo" ]; then
+    git -C "$repo" diff "$intervalo" > "$tmp/diff" 2> "$tmp/erro" || erro_uso "git diff $intervalo falhou: $(cat "$tmp/erro")"
+    git -C "$repo" diff --name-only "$intervalo" > "$tmp/arquivos"
+    alvo="commits $intervalo"
+else
+    if [ -n "$base" ]; then
+        git -C "$repo" rev-parse --verify --quiet "$base^{commit}" >/dev/null || erro_uso "referência não encontrada: $base"
+        ref="$base"; rotulo="$base"
+    elif git -C "$repo" rev-parse --verify --quiet HEAD >/dev/null; then
+        ref="HEAD"; rotulo="HEAD"
+    else
+        # Repositório ainda sem commits: compara com a árvore vazia (tudo é novo)
+        ref="$(git -C "$repo" hash-object -t tree /dev/null)"; rotulo="repositório vazio (ainda sem commits)"
+    fi
+    git -C "$repo" diff "$ref" > "$tmp/diff" 2> "$tmp/erro" || erro_uso "git diff $rotulo falhou: $(cat "$tmp/erro")"
+    git -C "$repo" diff --name-only "$ref" > "$tmp/arquivos"
+    # Arquivos novos ainda não rastreados também entram na revisão
+    while IFS= read -r -d '' f; do
+        git -C "$repo" diff --no-index -- /dev/null "$f" >> "$tmp/diff" 2>/dev/null
+        printf '%s\n' "$f" >> "$tmp/arquivos"
+    done < <(git -C "$repo" ls-files --others --exclude-standard -z)
+    alvo="mudanças em relação a $rotulo (inclui arquivos novos)"
+fi
+[ -s "$tmp/diff" ] || { echo "agy-revisar: nada para revisar ($alvo)"; exit 0; }
+
+tamanho=$(wc -c < "$tmp/diff")
+if [ "$tamanho" -gt 300000 ]; then
+    arquivos="$(sort -u "$tmp/arquivos")"
+    corpo="O diff tem ${tamanho} bytes, grande demais para colar. Arquivos alterados:
+$arquivos
+
+Leia esses arquivos no repositório e compare com o git (você tem acesso de leitura)."
+else
+    corpo="\`\`\`diff
+$(cat "$tmp/diff")
+\`\`\`"
+fi
+
+cat > "$tmp/prompt.md" <<EOF
+Você é o revisor de código de uma segunda opinião. Revise as $alvo no repositório $repo.
+Você está em modo somente leitura: pode abrir qualquer arquivo do repositório para entender o contexto, mas não edite nada.
+${foco:+
+Foco pedido: $foco
+}
+Procure o que realmente quebra ou é perigoso:
+- bugs de lógica, casos de borda, condições de corrida, vazamento de recurso;
+- regressões: algo que funcionava e deixa de funcionar;
+- segurança: injeção, segredo exposto, permissão errada, entrada não validada;
+- erros de integração: assinatura, chamada ou contrato que não bate com o resto do código.
+
+Não aponte estilo, nomes ou gosto pessoal. Para cada achado, dê um cenário concreto (entrada ou estado que quebra e o que acontece). Se não tiver certeza, marque a confiança como baixa em vez de inventar.
+Veredito: "aprovado" se não há nada a corrigir, "ajustar" se há problema a corrigir, "reprovar" se a abordagem está errada ou há risco grave.
+
+$corpo
+EOF
+
+args=(--dir "$repo" --modo plan --papel "$papel" --nome "revisao" --timeout "$tempo"
+      --schema "$AQUI/../assets/schema-revisao.json" --prompt-arquivo "$tmp/prompt.md" --sem-regras)
+[ -n "$modelo" ] && args+=(--modelo "$modelo")
+saida="$("$AQUI/agy-tarefa" "${args[@]}")"; codigo=$?
+pasta="$(echo "$saida" | sed -n 's/^PASTA=//p' | tail -1)"
+if [ "$codigo" -ne 0 ] || [ ! -f "$pasta/estruturado.json" ]; then
+    echo "$saida"
+    echo "agy-revisar: a revisão falhou (veja $pasta/stderr.log)" >&2
+    exit 1
+fi
+
+python3 -I - "$pasta/estruturado.json" "$pasta/meta.json" <<'PYEOF'
+import json, sys
+r = json.load(open(sys.argv[1])); meta = json.load(open(sys.argv[2]))
+ordem = {"critico": 0, "alto": 1, "medio": 2, "baixo": 3}
+achados = sorted(r.get("achados", []), key=lambda a: (ordem.get(a.get("gravidade"), 9), a.get("arquivo", "")))
+print(f"=== Revisão do agy ({meta['modelo']}, {meta['duracao_s']}s): {r.get('veredito', '?').upper()} ===")
+print(r.get("resumo", ""))
+if not achados:
+    print("\nNenhum achado.")
+for i, a in enumerate(achados, 1):
+    print(f"\n{i}. [{a.get('gravidade')}/{a.get('confianca')}] {a.get('arquivo')}:{a.get('linha')}")
+    print(f"   Problema: {a.get('problema')}")
+    print(f"   Evidência: {a.get('evidencia')}")
+    print(f"   Sugestão: {a.get('sugestao')}")
+PYEOF
+echo "PASTA=$pasta"

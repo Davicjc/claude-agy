@@ -1,0 +1,31 @@
+{
+  "type": "object",
+  "required": ["veredito", "resumo", "achados"],
+  "properties": {
+    "veredito": {
+      "type": "string",
+      "enum": ["aprovado", "ajustar", "reprovar"],
+      "description": "aprovado: pode seguir; ajustar: tem problema a corrigir; reprovar: abordagem errada ou risco grave"
+    },
+    "resumo": {
+      "type": "string",
+      "description": "Uma ou duas frases sobre a mudança e o risco principal"
+    },
+    "achados": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["gravidade", "confianca", "arquivo", "linha", "problema", "evidencia", "sugestao"],
+        "properties": {
+          "gravidade": {"type": "string", "enum": ["critico", "alto", "medio", "baixo"]},
+          "confianca": {"type": "string", "enum": ["alta", "media", "baixa"]},
+          "arquivo": {"type": "string"},
+          "linha": {"type": "integer"},
+          "problema": {"type": "string", "description": "O defeito, em uma frase"},
+          "evidencia": {"type": "string", "description": "Cenário concreto: entrada/estado que quebra e o que acontece"},
+          "sugestao": {"type": "string", "description": "Como corrigir"}
+        }
+      }
+    }
+  }
+}
