@@ -51,7 +51,7 @@ Ou em texto livre: *"pede pro agy gerar o banner do README com as cores da marca
 | O ícone deste plugin | Gerado pelo próprio agy (`--papel imagem`) e conferido antes de usar |
 | **A skill revisando a si mesma** (4 rodadas) | 11 achados reais nos próprios scripts, cada um conferido antes e todos corrigidos. Uma sugestão foi **recusada**: desligar o `safe.directory` como root abriria uma brecha de segurança |
 
-**Automáticos** ([`tests/rodar.sh`](tests/rodar.sh), com um agy falso, sem rede e sem custo): 94 verificações a cada push. São 78 como usuário comum, no **Linux** e no **macOS com o bash 3.2 de fábrica**, e mais 16 que só fazem sentido **como root**, no Linux. Elas cobrem escolha de modelo (inclusive modelos que ainda não existem), opções erradas, commit indevido, tempo esgotado, resposta vazia, arquivo já modificado editado de novo, pedido de 150 KB, saída longa cortada, tarefas em paralelo, dono dos arquivos (com proteção contra hardlink), recusa do git por dono diferente, revisão a partir de subpasta, diffs grandes e repositório sem commits.
+**Automáticos** ([`tests/rodar.sh`](tests/rodar.sh), com um agy falso, sem rede e sem custo): 95 verificações a cada push. São 79 como usuário comum, no **Linux** e no **macOS com o bash 3.2 de fábrica**, e mais 16 que só fazem sentido **como root**, no Linux. Elas cobrem escolha de modelo (inclusive modelos que ainda não existem), opções erradas, commit indevido, tempo esgotado, resposta vazia, arquivo já modificado editado de novo, pedido de 150 KB, saída longa cortada, tarefas em paralelo, dono dos arquivos (com proteção contra hardlink), recusa do git por dono diferente, revisão a partir de subpasta, diffs grandes e repositório sem commits.
 
 ---
 

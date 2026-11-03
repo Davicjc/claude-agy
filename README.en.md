@@ -51,7 +51,7 @@ Or in plain words: *"have agy make the README banner with the brand colors"*, *"
 | This plugin's icon | Made by agy itself (`--papel imagem`) and checked before use |
 | **The skill reviewing itself** (4 rounds) | 11 real findings in its own scripts, each one checked first and all fixed. One suggestion was **rejected**: turning off `safe.directory` as root would open a security hole |
 
-**Automated** ([`tests/rodar.sh`](tests/rodar.sh), with a fake agy, no network and no cost): 94 checks on every push. That is 78 as a regular user, on **Linux** and on **macOS with its stock bash 3.2**, plus 16 that only make sense **as root**, on Linux. They cover model selection (including models that don't exist yet), bad options, unwanted commits, timeouts, empty answers, edits to an already modified file, a 150 KB request, long output being trimmed, parallel runs, file ownership (with hardlink protection), git refusing a repo owned by someone else, reviewing from a subfolder, large diffs and repositories with no commits.
+**Automated** ([`tests/rodar.sh`](tests/rodar.sh), with a fake agy, no network and no cost): 95 checks on every push. That is 79 as a regular user, on **Linux** and on **macOS with its stock bash 3.2**, plus 16 that only make sense **as root**, on Linux. They cover model selection (including models that don't exist yet), bad options, unwanted commits, timeouts, empty answers, edits to an already modified file, a 150 KB request, long output being trimmed, parallel runs, file ownership (with hardlink protection), git refusing a repo owned by someone else, reviewing from a subfolder, large diffs and repositories with no commits.
 
 ---
 
