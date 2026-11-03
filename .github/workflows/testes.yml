@@ -34,6 +34,7 @@ jobs:
           python3 --version
           git --version
           command -v timeout || command -v gtimeout || echo "sem timeout/gtimeout (o script usa só o limite do agy)"
+          git config --show-origin --get-all safe.directory || echo "safe.directory: não definido"
 
       - name: ShellCheck
         if: runner.os == 'Linux'

@@ -168,9 +168,12 @@ if [ "$(id -u)" -eq 0 ]; then
     espera 0 "hardlink para um arquivo do root" env SUDO_UID=65534 AGY_FALSO_CENARIO=hardlink AGY_FALSO_LINK_DE="$TMP/segredo-root" "$S/agy-tarefa" --dir "$G" --prompt link
     igual "arquivo do root ligado por hardlink continua do root" "$(dono "$TMP/segredo-root")" 0
 
-    espera 2 "revisar repositório de outro usuário sem sudo é recusado" env -u SUDO_UID "$S/agy-revisar" --dir "$G"
+    # Sem SUDO_UID e sem a config do git da máquina (algumas, como a do GitHub Actions,
+    # vêm com safe.directory=* e desligam a proteção): o git tem de recusar.
+    sem_sudo=(env -u SUDO_UID GIT_CONFIG_NOSYSTEM=1 GIT_CONFIG_GLOBAL=/dev/null)
+    espera 2 "revisar repositório de outro usuário sem sudo é recusado" "${sem_sudo[@]}" "$S/agy-revisar" --dir "$G"
     contem "explica que o dono é outro usuário" "o dono é outro usuário"
-    espera 0 "tarefa em repositório recusado pelo git" env -u SUDO_UID "$S/agy-tarefa" --dir "$G" --modo plan --prompt oi
+    espera 0 "tarefa em repositório recusado pelo git" "${sem_sudo[@]}" "$S/agy-tarefa" --dir "$G" --modo plan --prompt oi
     contem "o relatório explica a recusa do git" "o git recusou este repositório"
 
     D="$TMP/do-usuario"; mkdir -p "$D"; chown 65534:65534 "$D"
@@ -224,7 +227,8 @@ mkdir -p "$R/sub"; printf 'x = 1\n' > "$R/sub/a.py"; git -C "$R" add -A; git -C 
 printf 'x = 2\n' > "$R/sub/a.py"; printf 'NOVO = 1\n' > "$R/na_raiz.py"
 espera 0 "revisar a partir de uma subpasta" "$S/agy-revisar" --dir "$R/sub"
 P="$(pasta_da_ultima)"
-arquivo_contem "usa a raiz do repositório" "$P/prompt.md" "no repositório $R."
+# Caminho real: no macOS /var é atalho para /private/var e o git devolve o caminho real
+arquivo_contem "usa a raiz do repositório" "$P/prompt.md" "no repositório $(cd "$R" && pwd -P)."
 arquivo_contem "inclui arquivo novo fora da subpasta" "$P/prompt.md" "na_raiz.py"
 
 R="$(novo_repo diff-grande)"
