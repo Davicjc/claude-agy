@@ -198,4 +198,4 @@ Histórico de versões: [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Licença
 
-MIT. Feito por [Davi Castro](https://davicjc.com).
+MIT, com crédito de autoria obrigatório (veja [LICENSE](LICENSE)). Feito por [Davi Castro](https://davicjc.com).
