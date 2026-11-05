@@ -47,6 +47,7 @@ Em projetos reais, queimar a janela de contexto e a cota do Claude com tarefas m
 | **Revisão cruzada independente** | `agy-revisar` manda um `git diff` para o agy revisar **só lendo** e recebe veredito e achados num formato fixo: gravidade, confiança, arquivo:linha, evidência e sugestão |
 | **Trabalho em paralelo** | A skill ensina o Claude a dividir o trabalho em partes sem arquivos em comum (um `git worktree` por parte), rodar várias ao mesmo tempo e validar cada uma antes de juntar |
 | **Imagem, áudio e vídeo** | Banner, mockup, ícone, transcrição de áudio de WhatsApp, análise de .mp4, direto do arquivo |
+| **Modo economia** | Com a cota do Claude alta (semana ≥ 70% ou janela de 5 h ≥ 80%), o Claude vira só o comandante: decide, escreve uma diretriz quase impossível de errar e o agy executa quase tudo. `agy-cota` diz quando entrar nesse modo |
 | **Prestação de contas** | `agy-historico` lista as execuções com status, modelo, tempo e tokens consumidos no agy. Cada uma guarda prompt, resposta e alterações em `~/.cache/agy-skill/execucoes/` |
 
 O Claude usa a skill sozinho quando a tarefa pede. Você também pode chamar direto:
@@ -57,6 +58,7 @@ O Claude usa a skill sozinho quando a tarefa pede. Você também pode chamar dir
 | `/agy:revisar [--base main]` | Revisão cruzada das mudanças atuais; o Claude confere cada achado e diz quais são reais |
 | `/agy:modelos` | Modelos disponíveis no agy e qual é usado em cada papel |
 | `/agy:historico [N]` | Últimas execuções e tokens gastos |
+| `/agy:cota` | Uso da cota do Claude e se o modo economia está ligado |
 
 Ou em texto livre: *"pede pro agy refatorar esses 30 arquivos pro padrão novo"*, *"pede pro agy gerar o banner do README com as cores da marca"*, *"transcreve esse áudio do WhatsApp em ~/Downloads"*, *"faz uma revisão cruzada do que mudou desde a main"*.
 
@@ -75,7 +77,7 @@ Ou em texto livre: *"pede pro agy refatorar esses 30 arquivos pro padrão novo"*
 | O ícone deste plugin | Gerado pelo próprio agy (`--papel imagem`) e conferido antes de usar |
 | **A skill revisando a si mesma** (4 rodadas) | 11 achados reais nos próprios scripts, cada um conferido antes e todos corrigidos. Uma sugestão foi **recusada**: desligar o `safe.directory` como root abriria uma brecha de segurança |
 
-**Automáticos** ([`tests/rodar.sh`](tests/rodar.sh), com um agy falso, sem rede e sem custo): 95 verificações a cada push. São 79 como usuário comum, no **Linux** e no **macOS com o bash 3.2 de fábrica**, e mais 16 que só fazem sentido **como root**, no Linux. Elas cobrem escolha de modelo (inclusive modelos que ainda não existem), opções erradas, commit indevido, tempo esgotado, resposta vazia, arquivo já modificado editado de novo, pedido de 150 KB, saída longa cortada, tarefas em paralelo, dono dos arquivos (com proteção contra hardlink), recusa do git por dono diferente, revisão a partir de subpasta, diffs grandes e repositório sem commits.
+**Automáticos** ([`tests/rodar.sh`](tests/rodar.sh), com um agy falso, sem rede e sem custo): 114 verificações a cada push. São 98 como usuário comum, no **Linux** e no **macOS com o bash 3.2 de fábrica**, e mais 16 que só fazem sentido **como root**, no Linux. Elas cobrem escolha de modelo (inclusive modelos que ainda não existem), opções erradas, commit indevido, tempo esgotado, resposta vazia, arquivo já modificado editado de novo, pedido de 150 KB, saída longa cortada, tarefas em paralelo, dono dos arquivos (com proteção contra hardlink), recusa do git por dono diferente, revisão a partir de subpasta, diffs grandes, repositório sem commits e a leitura da cota do Claude (modo economia).
 
 ---
 
@@ -109,6 +111,21 @@ Ou em dois passos (qualquer versão):
 ```
 
 Depois rode `/reload-plugins` (ou abra uma sessão nova) e teste com `/agy:modelos`.
+
+### Modo economia (opcional, recomendado)
+
+O Claude Code só entrega o uso da cota (janela de 5 h e semana) para a **status line**. Para o `agy-cota` enxergar esses números, ponha isto em `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "sh -c 'd=$(ls -d ~/.claude/plugins/cache/davicjc/agy/*/ | sort -V | tail -1); exec python3 \"$d/skills/agy/scripts/agy-cota\" --statusline'"
+  }
+}
+```
+
+A barra passa a mostrar algo como `Opus · 5h 34% · semana 74% · modo agy`. Os limites mudam com `AGY_COTA_SEMANA` (padrão 70) e `AGY_COTA_SESSAO` (padrão 80). O uso da cota só aparece para assinantes Pro, Max e Ultra do claude.ai. Se você já tem uma status line, chame `agy-cota --statusline` com o mesmo JSON de entrada dentro dela.
 
 ### Atualizar
 
@@ -145,6 +162,9 @@ agy-revisar --dir ~/projeto --exigir-aprovado    # código 4 se não for aprovad
 
 # Histórico e tokens
 agy-historico 20
+
+# Cota do Claude: hora do modo economia?
+agy-cota                               # MODO=economia|normal|desconhecido, SEMANA=, SESSAO=, MOTIVO=
 ```
 
 **Papéis:** `codigo`, `revisao`, `pesquisa`, `imagem`, `rapido`. **Forçar um modelo:** `AGY_MODELO_CODIGO=<id>` (por papel) ou `AGY_MODELO=<id>` (todos).
@@ -179,13 +199,14 @@ Problemas comuns e soluções: [`references/problemas.md`](plugins/agy/skills/ag
 .claude-plugin/marketplace.json          marketplace "davicjc"
 plugins/agy/
   .claude-plugin/plugin.json, icon.png
-  commands/                              /agy:delegar, /agy:revisar, /agy:modelos, /agy:historico
+  commands/                              /agy:delegar, /agy:revisar, /agy:modelos, /agy:historico, /agy:cota
   skills/agy/
-    SKILL.md                             quando e como delegar, validar e paralelizar
+    SKILL.md                             quando e como delegar, validar, paralelizar e economizar
     scripts/agy-modelo                   escolha dinâmica de modelo
     scripts/agy-tarefa                   execução rastreável
     scripts/agy-revisar                  revisão cruzada estruturada
     scripts/agy-historico                histórico e tokens
+    scripts/agy-cota                     uso da cota do Claude e modo economia
     assets/schema-revisao.json           formato dos achados
     references/                          modelo de pedido e solução de problemas
 tests/rodar.sh, tests/falso/agy          testes com um agy falso

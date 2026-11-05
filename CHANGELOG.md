@@ -1,5 +1,14 @@
 # Histórico de versões
 
+## 1.2.0 — 04/11/2026
+
+**Modo economia**
+- Com a cota do Claude alta (semana ≥ 70% ou janela de 5 h ≥ 80%), a skill manda o Claude virar só o comandante: entender, decidir, escrever uma diretriz quase impossível de errar e delegar ao agy praticamente toda a execução, inclusive as correções (`--continuar`). As exceções de segurança continuam com o Claude.
+- `agy-cota`: lê o uso da cota que a status line guardou e responde `MODO=economia|normal|desconhecido`. Limites em `AGY_COTA_SEMANA` e `AGY_COTA_SESSAO`. `agy-cota --statusline` é a própria status line: guarda os números e mostra `Opus · 5h 34% · semana 74% · modo agy`.
+- Comando `/agy:cota`.
+- Testes: 114 verificações (98 como usuário comum e 16 como root); 19 novas para o `agy-cota`.
+- `references/prompt-modelo.md`: seção "Diretriz à prova de erro" (estado atual colado, mudança exata, decisões já tomadas, aceite com comando, saída `BLOQUEADO:` em vez de improvisar).
+
 ## 1.1.1 — 03/11/2026
 
 - `agy-historico`: concordância ("1 execução" em vez de "1 execuções").

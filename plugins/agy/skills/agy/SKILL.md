@@ -1,6 +1,6 @@
 ---
 name: agy
-description: Orquestra o agy (Antigravity CLI, Gemini) como segundo agente do Claude Code — delega tarefas, roda trabalho em paralelo e pede revisão independente de código, escolhendo o modelo mais novo do agy na hora. Use sempre que houver agy instalado e a tarefa envolver gerar ou editar imagem (banner, foto, mockup, logo, texto dentro de imagem), transcrever ou analisar áudio/vídeo (.ogg, .mp3, .mp4, áudio de WhatsApp), dividir um trabalho grande em partes independentes, refactor mecânico em muitos arquivos, pesquisa longa, economizar cota do Claude, ou quando o usuário pedir "segunda opinião", "revisão cruzada", "valida esse código", "pede pro Gemini/agy", mesmo que não diga "agy".
+description: Orquestra o agy (Antigravity CLI, Gemini) como segundo agente do Claude Code — delega tarefas, roda trabalho em paralelo e pede revisão independente de código, escolhendo o modelo mais novo do agy na hora. Use sempre que houver agy instalado e a tarefa envolver gerar ou editar imagem (banner, foto, mockup, logo, texto dentro de imagem), transcrever ou analisar áudio/vídeo (.ogg, .mp3, .mp4, áudio de WhatsApp), dividir um trabalho grande em partes independentes, refactor mecânico em muitos arquivos, pesquisa longa, economizar cota do Claude (MODO ECONOMIA: semana >= 70% ou janela de 5 h >= 80%, ou aviso de limite perto do fim), ou quando o usuário pedir "segunda opinião", "revisão cruzada", "valida esse código", "pede pro Gemini/agy", mesmo que não diga "agy".
 ---
 
 # agy: Claude + Gemini trabalhando juntos
@@ -17,8 +17,9 @@ Os scripts ficam em `scripts/` ao lado deste arquivo. Nos comandos abaixo, `<ski
 | `scripts/agy-tarefa ...` | Roda uma tarefa, guarda tudo e mostra o que mudou de verdade no git |
 | `scripts/agy-revisar ...` | Revisão de um diff só leitura, com achados estruturados |
 | `scripts/agy-historico [N]` | Últimas execuções: status, modelo, tempo e tokens (para prestar contas do gasto) |
+| `scripts/agy-cota` | Diz se é hora do **modo economia**, lendo o uso da cota do Claude que a status line guardou |
 
-O usuário também pode chamar direto: `/agy:delegar`, `/agy:revisar`, `/agy:modelos` e `/agy:historico`.
+O usuário também pode chamar direto: `/agy:delegar`, `/agy:revisar`, `/agy:modelos`, `/agy:historico` e `/agy:cota`.
 
 ## Antes de tudo: o agy está pronto?
 
@@ -27,6 +28,26 @@ command -v agy && <skill>/scripts/agy-modelo --listar --atualizar
 ```
 
 Se `agy` não existir ou o comando falhar, pare e avise o usuário (ele precisa instalar ou fazer login no agy). Não tente contornar. Depois da primeira checagem da sessão, `agy-modelo` sem `--atualizar` usa a lista guardada por 1 h.
+
+## Modo economia: o Claude comanda, o agy executa
+
+Confira a cota **no começo de cada pedido novo** que não seja trivial (é barato):
+
+```bash
+<skill>/scripts/agy-cota        # MODO=economia|normal|desconhecido, SEMANA=, SESSAO=, MOTIVO=
+```
+
+Entre em **modo economia** quando der `MODO=economia` (semana >= 70% ou janela de 5 h >= 80%; `AGY_COTA_SEMANA` e `AGY_COTA_SESSAO` mudam os limites) **ou** quando o Claude Code avisar que o limite está perto do fim. `MODO=desconhecido` quer dizer que a status line ainda não guardou os números (veja o README): siga no normal, a menos que haja aviso de limite.
+
+No modo economia o papel do Claude muda. Ele é o **comandante que sabe o que tem que ser feito**, não o braço que faz:
+
+1. **Entenda o pedido e decida o caminho**, lendo o mínimo. Para explorar código grande, mande o agy ler e resumir (`--modo plan`, papel `pesquisa`) em vez de ler tudo você.
+2. **Delegue praticamente toda a execução**: código, edições, refactors, testes, documentação, pesquisa, imagem, áudio e vídeo. A lista "Não delegue" abaixo fica bem mais curta: valem só as exceções de segurança (segredo, ação irreversível, `git push`, mensagem para terceiros) e conversa com o usuário.
+3. **Escreva uma diretriz quase impossível de errar**, seguindo a seção "Diretriz à prova de erro" de `references/prompt-modelo.md`: passos com a mudança exata, o trecho atual do código colado, critérios de aceite e o comando que prova que deu certo. Tempo gasto na diretriz economiza rodadas de correção.
+4. **Divida e rode em paralelo** as partes independentes (até 3–4 de uma vez).
+5. **Valide barato**: `alteracoes.txt`, `git diff --stat`, os testes e a saída do comando de verificação. Leia só os trechos que a verificação apontar como suspeitos, não o diff inteiro.
+6. **Correção também é do agy**: mande de volta com `--continuar <id>` e a lista exata do que está errado. Corrija você mesmo só o que for menor que escrever a correção (umas poucas linhas).
+7. **Avise o usuário em uma linha** que entrou no modo economia e por quê (ex.: "modo economia: semana 74%").
 
 ## Quando delegar (e quando não)
 

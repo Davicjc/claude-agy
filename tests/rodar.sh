@@ -249,6 +249,35 @@ nao_contem "concordância no singular" " 1 execuções"
 espera 0 "--json" "$S/agy-historico" --json
 if printf '%s' "$ULTIMA" | python3 -I -c 'import json, sys; assert len(json.load(sys.stdin)) > 5'; then passa "--json é válido"; else falha "--json é válido"; fi
 
+echo "== agy-cota"
+AGORA="$(date +%s)"
+cota_json() { printf '{"model":{"display_name":"Opus"},"rate_limits":{"five_hour":{"used_percentage":%s,"resets_at":%s},"seven_day":{"used_percentage":%s,"resets_at":%s}}}' "$1" "$((AGORA + 3600))" "$2" "$((AGORA + 86400))"; }
+espera 0 "sem dados" "$S/agy-cota"
+contem "sem dados = desconhecido" "MODO=desconhecido"
+cota_json 10 40 > "$TMP/sl.json"
+espera 0 "status line normal" sh -c "\"$S/agy-cota\" --statusline < \"$TMP/sl.json\""
+contem "status line mostra a cota" "Opus · 5h 10% · semana 40%"
+nao_contem "status line sem economia" "modo agy"
+espera 0 "abaixo dos limites" "$S/agy-cota" --modo
+contem "modo normal" "normal"
+cota_json 10 70 > "$TMP/sl.json"
+espera 0 "semana no limite" sh -c "\"$S/agy-cota\" --statusline < \"$TMP/sl.json\""
+contem "status line avisa economia" "modo agy"
+espera 0 "economia pela semana" "$S/agy-cota"
+contem "semana >= 70" "MODO=economia"
+cota_json 80 10 > "$TMP/sl.json"
+sh -c "\"$S/agy-cota\" --statusline < \"$TMP/sl.json\"" >/dev/null
+espera 0 "economia pela janela de 5 h" "$S/agy-cota"
+contem "5 h >= 80" "sessão de 5 h 80%"
+espera 0 "limite por variável" env AGY_COTA_SESSAO=90 "$S/agy-cota" --modo
+contem "limite maior = normal" "normal"
+printf '{"rate_limits":{"seven_day":{"used_percentage":95,"resets_at":%s}}}' "$((AGORA - 10))" > "$TMP/sl.json"
+sh -c "\"$S/agy-cota\" --statusline < \"$TMP/sl.json\"" >/dev/null
+espera 0 "janela já reiniciada" "$S/agy-cota" --modo
+contem "janela vencida não conta" "desconhecido"
+espera 0 "entrada inválida não quebra a status line" sh -c "echo lixo | \"$S/agy-cota\" --statusline"
+espera 2 "opção errada" "$S/agy-cota" --xyz
+
 echo
 echo "Resultado: $ok ok, $falhas falha(s)  |  bash $BASH_VERSION  |  $(uname -s)"
 [ "$falhas" -eq 0 ]

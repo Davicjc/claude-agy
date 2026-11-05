@@ -41,6 +41,20 @@ Curta: o que fez, os arquivos criados ou alterados e o resultado da verificaçã
 - **Separe o que é seu do que é dele.** Em paralelo, liste os arquivos que outra parte está mexendo.
 - **Uma tarefa por chamada.** Se a lista de passos passa de ~8 itens ou mistura assuntos, divida.
 
+## Diretriz à prova de erro (modo economia)
+
+No modo economia o agy faz quase tudo, então cada diretriz precisa sair certa de primeira. Além da estrutura acima:
+
+- **Cole o estado atual.** O trecho do código que vai mudar, com o caminho e as linhas, em vez de "abra o arquivo e procure". Ele erra menos quando vê o que existe.
+- **Diga a mudança exata.** "Na função `salvar()` de `/abs/app/db.js`, troque `set` por `update` e trate o erro `not-found` criando o documento", não "melhore o salvamento".
+- **Uma decisão por linha, e já tomada.** Tudo que dependia de escolha (nome, biblioteca, formato, texto da interface) vai decidido. Nada de "use o que achar melhor".
+- **Critérios de aceite verificáveis**, e o comando exato que prova cada um, com a saída esperada. Peça para colar a saída na resposta.
+- **Limites explícitos**: os arquivos que pode tocar (o resto é proibido), sem dependência nova, sem mudar contrato ou estilo.
+- **Saída para dúvida.** "Se algo aqui não bater com o código (arquivo não existe, função com outro nome, teste já quebrado antes), pare e responda `BLOQUEADO: <motivo>`, sem improvisar." Melhor parar que inventar.
+- **Pequena o bastante para acertar.** Se passou de ~8 passos ou mistura assuntos, divida em tarefas e rode em sequência ou em paralelo.
+
+Antes de mandar, releia como se fosse o agy, sem ter visto a conversa: se em algum ponto você teria que adivinhar, a diretriz ainda não está pronta.
+
 ## Exemplo curto (imagem)
 
 ```markdown

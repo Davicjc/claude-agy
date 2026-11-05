@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""Diz se o Claude deve entrar no MODO ECONOMIA (delegar quase tudo ao agy).
+
+Uso:
+  agy-cota                 mostra MODO=, SEMANA=, SESSAO= e o motivo
+  agy-cota --modo          só a palavra: economia, normal ou desconhecido
+  agy-cota --statusline    para a status line do Claude Code (lê o JSON da entrada)
+
+O Claude Code entrega o uso da cota (janela de 5 h e de 7 dias) só para a
+status line. O modo --statusline guarda esses números em
+~/.cache/agy-skill/cota.json e imprime uma linha curta; o modo normal lê esse
+arquivo. Configure em ~/.claude/settings.json (veja o README).
+
+Limites (mude por variável de ambiente):
+  AGY_COTA_SEMANA=70   % da semana a partir do qual entra em economia
+  AGY_COTA_SESSAO=80   % da janela de 5 h (a cota "do dia") idem
+"""
+import json
+import os
+import sys
+import tempfile
+import time
+
+CACHE = os.path.join(os.environ.get("XDG_CACHE_HOME", os.path.expanduser("~/.cache")),
+                     "agy-skill", "cota.json")
+VELHO_S = 6 * 3600  # números mais velhos que isso não decidem nada
+
+
+def limite(nome, padrao):
+    try:
+        return float(os.environ.get(nome, padrao))
+    except ValueError:
+        return float(padrao)
+
+
+def janela(rl, nome):
+    j = (rl or {}).get(nome) or {}
+    pct = j.get("used_percentage")
+    if not isinstance(pct, (int, float)):
+        return None
+    return {"pct": float(pct), "reset": j.get("resets_at")}
+
+
+def gravar(dados):
+    os.makedirs(os.path.dirname(CACHE), exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(CACHE), prefix=".cota-")
+    with os.fdopen(fd, "w", encoding="utf-8") as fh:
+        json.dump(dados, fh)
+    os.replace(tmp, CACHE)
+
+
+def ler():
+    try:
+        with open(CACHE, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def avaliar(dados, agora=None):
+    """Devolve (modo, semana, sessao, motivo)."""
+    agora = agora or time.time()
+    if not dados or agora - dados.get("salvo_em", 0) > VELHO_S:
+        return "desconhecido", None, None, "sem dados recentes da status line"
+    sem, ses = dados.get("semana"), dados.get("sessao")
+    # janela que já reiniciou não vale mais
+    if sem and isinstance(sem.get("reset"), (int, float)) and sem["reset"] < agora:
+        sem = None
+    if ses and isinstance(ses.get("reset"), (int, float)) and ses["reset"] < agora:
+        ses = None
+    if sem is None and ses is None:
+        return "desconhecido", None, None, "a conta não informa a cota"
+    lim_sem, lim_ses = limite("AGY_COTA_SEMANA", 70), limite("AGY_COTA_SESSAO", 80)
+    motivos = []
+    if sem and sem["pct"] >= lim_sem:
+        motivos.append(f"semana {sem['pct']:.0f}% >= {lim_sem:.0f}%")
+    if ses and ses["pct"] >= lim_ses:
+        motivos.append(f"sessão de 5 h {ses['pct']:.0f}% >= {lim_ses:.0f}%")
+    modo = "economia" if motivos else "normal"
+    return (modo, sem and sem["pct"], ses and ses["pct"],
+            "; ".join(motivos) or "abaixo dos limites")
+
+
+def statusline():
+    try:
+        entrada = json.load(sys.stdin)
+    except ValueError:
+        entrada = {}
+    rl = entrada.get("rate_limits") or {}
+    sem, ses = janela(rl, "seven_day"), janela(rl, "five_hour")
+    if sem or ses:
+        try:
+            gravar({"semana": sem, "sessao": ses, "salvo_em": time.time()})
+        except OSError:
+            pass
+    modo, p_sem, p_ses, _ = avaliar(ler())
+    partes = []
+    nome = ((entrada.get("model") or {}).get("display_name")) or ""
+    if nome:
+        partes.append(nome)
+    if p_ses is not None:
+        partes.append(f"5h {p_ses:.0f}%")
+    if p_sem is not None:
+        partes.append(f"semana {p_sem:.0f}%")
+    if modo == "economia":
+        partes.append("modo agy")
+    print(" · ".join(partes))
+
+
+def main():
+    args = sys.argv[1:]
+    if args and args[0] in ("-h", "--help"):
+        print(__doc__.strip())
+        return 0
+    if args == ["--statusline"]:
+        try:
+            statusline()
+        except Exception:  # noqa: BLE001 - a status line nunca pode quebrar
+            print("")
+        return 0
+    if args and args != ["--modo"]:
+        print(f"agy-cota: opção desconhecida: {' '.join(args)} (use --help)", file=sys.stderr)
+        return 2
+    modo, sem, ses, motivo = avaliar(ler())
+    if args == ["--modo"]:
+        print(modo)
+        return 0
+    print(f"MODO={modo}")
+    print(f"SEMANA={'' if sem is None else f'{sem:.0f}'}")
+    print(f"SESSAO={'' if ses is None else f'{ses:.0f}'}")
+    print(f"MOTIVO={motivo}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

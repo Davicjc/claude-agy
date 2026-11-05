@@ -47,6 +47,7 @@ In real-world projects, burning Claude's context window and expensive token quot
 | **Independent cross review** | `agy-revisar` sends a `git diff` to agy for a **read-only** review and gets a verdict and findings in a fixed format: severity, confidence, file:line, evidence and suggestion |
 | **Parallel work** | The skill teaches Claude to split work into parts that share no files (one `git worktree` per part), run them at the same time and validate each one before merging |
 | **Images, audio, video** | Banners, mockups, icons, WhatsApp voice note transcription, .mp4 analysis, straight from the file |
+| **Saving mode** | When Claude's quota runs high (week ≥ 70% or 5-hour window ≥ 80%), Claude only commands: it decides, writes a near-foolproof directive and agy does almost all the work. `agy-cota` says when to switch |
 | **Accountability** | `agy-historico` lists runs with status, model, time and tokens spent in agy. Each run keeps its prompt, answer and changes in `~/.cache/agy-skill/execucoes/` |
 
 Claude uses the skill on its own when the task calls for it. You can also call it directly:
@@ -57,6 +58,7 @@ Claude uses the skill on its own when the task calls for it. You can also call i
 | `/agy:revisar [--base main]` | Cross review of the current changes; Claude checks each finding and says which ones are real |
 | `/agy:modelos` | Models available in agy and which one each role uses |
 | `/agy:historico [N]` | Latest runs and tokens spent |
+| `/agy:cota` | Claude quota usage and whether saving mode is on |
 
 Or in plain words: *"have agy refactor these 30 files to the new pattern"*, *"have agy make the README banner with the brand colors"*, *"transcribe this WhatsApp audio in ~/Downloads"*, *"do a cross review of what changed since main"*.
 
@@ -75,7 +77,7 @@ Or in plain words: *"have agy refactor these 30 files to the new pattern"*, *"ha
 | This plugin's icon | Made by agy itself (`--papel imagem`) and checked before use |
 | **The skill reviewing itself** (4 rounds) | 11 real findings in its own scripts, each one checked first and all fixed. One suggestion was **rejected**: turning off `safe.directory` as root would open a security hole |
 
-**Automated** ([`tests/rodar.sh`](tests/rodar.sh), with a fake agy, no network and no cost): 95 checks on every push. That is 79 as a regular user, on **Linux** and on **macOS with its stock bash 3.2**, plus 16 that only make sense **as root**, on Linux. They cover model selection (including models that don't exist yet), bad options, unwanted commits, timeouts, empty answers, edits to an already modified file, a 150 KB request, long output being trimmed, parallel runs, file ownership (with hardlink protection), git refusing a repo owned by someone else, reviewing from a subfolder, large diffs and repositories with no commits.
+**Automated** ([`tests/rodar.sh`](tests/rodar.sh), with a fake agy, no network and no cost): 114 checks on every push. That is 98 as a regular user, on **Linux** and on **macOS with its stock bash 3.2**, plus 16 that only make sense **as root**, on Linux. They cover model selection (including models that don't exist yet), bad options, unwanted commits, timeouts, empty answers, edits to an already modified file, a 150 KB request, long output being trimmed, parallel runs, file ownership (with hardlink protection), git refusing a repo owned by someone else, reviewing from a subfolder, large diffs, repositories with no commits and reading Claude's quota (saving mode).
 
 ---
 
@@ -109,6 +111,21 @@ Or in two steps (any version):
 ```
 
 Then run `/reload-plugins` (or start a new session) and try `/agy:modelos`.
+
+### Saving mode (optional, recommended)
+
+Claude Code only hands quota usage (5-hour window and week) to the **status line**. For `agy-cota` to see those numbers, put this in `~/.claude/settings.json`:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "sh -c 'd=$(ls -d ~/.claude/plugins/cache/davicjc/agy/*/ | sort -V | tail -1); exec python3 \"$d/skills/agy/scripts/agy-cota\" --statusline'"
+  }
+}
+```
+
+The bar then shows something like `Opus · 5h 34% · semana 74% · modo agy`. Change the thresholds with `AGY_COTA_SEMANA` (default 70) and `AGY_COTA_SESSAO` (default 80). Quota usage is only reported to claude.ai Pro, Max and Ultra subscribers. If you already have a status line, call `agy-cota --statusline` from it with the same input JSON.
 
 ### Update
 
@@ -146,6 +163,9 @@ agy-revisar --dir ~/project --exigir-aprovado    # exit code 4 unless approved (
 
 # History and tokens
 agy-historico 20
+
+# Claude quota: time for saving mode?
+agy-cota                               # MODO=economia|normal|desconhecido, SEMANA=, SESSAO=, MOTIVO=
 ```
 
 **Roles:** `codigo` (code), `revisao` (review), `pesquisa` (research), `imagem` (image), `rapido` (fast). **Force a model:** `AGY_MODELO_CODIGO=<id>` (per role) or `AGY_MODELO=<id>` (all roles).
