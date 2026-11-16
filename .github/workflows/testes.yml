@@ -17,7 +17,7 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # O macOS vem com bash 3.2; o runner tem um bash novo do Homebrew na frente do PATH.
       # Força o 3.2 para provar que os scripts funcionam no Mac de fábrica.
